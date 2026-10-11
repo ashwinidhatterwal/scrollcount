@@ -10,4 +10,6 @@ const html=(await publicPage('/privacy',policy.server).text())
  .replaceAll('href="/privacy"',`href="${policy.server}/privacy"`)
  .replaceAll('href="/delete"',`href="${policy.server}/delete"`);
 writeFileSync(new URL('../website/privacy.html',import.meta.url),html);
+mkdirSync(new URL('../docs/',import.meta.url),{recursive:true});
+writeFileSync(new URL('../docs/privacy.html',import.meta.url),html);
 console.log(policyReady()?'Static privacy page exported.':'Preview exported with publication-incomplete notice. Configure email and regenerate before hosting.');
