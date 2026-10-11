@@ -1,3 +1,5 @@
+Current update: **1.2.5 (version code 23)**. Home-screen, app-drawer and application icons all use the density-specific PNG launcher asset for compatibility. Counting/sharing code is unchanged. Rebuild and publish the new AAB with your existing upload key.
+
 Public support/privacy contact is configured as **ashwinidhatterwal@gmail.com** in this package. App/backend metadata and the static privacy page have been regenerated. Backend deployment is still required. Contact configuration commands below apply if you change the address later.
 
 # ScrollCount 1.2.4-rc1

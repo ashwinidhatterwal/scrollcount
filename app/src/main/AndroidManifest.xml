@@ -4,8 +4,8 @@
 <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
 <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 <queries><package android:name="com.instagram.android"/><package android:name="com.google.android.youtube"/></queries>
-<application android:usesCleartextTraffic="false" android:allowBackup="false" android:fullBackupContent="@xml/backup_rules" android:dataExtractionRules="@xml/data_extraction_rules" android:icon="@mipmap/ic_launcher_legacy" android:roundIcon="@mipmap/ic_launcher" android:label="ScrollCount" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:supportsRtl="true">
-<activity android:icon="@mipmap/ic_launcher" android:name=".ProbeActivity" android:exported="true" android:launchMode="singleTop">
+<application android:usesCleartextTraffic="false" android:allowBackup="false" android:fullBackupContent="@xml/backup_rules" android:dataExtractionRules="@xml/data_extraction_rules" android:icon="@mipmap/ic_launcher_legacy" android:roundIcon="@mipmap/ic_launcher_legacy" android:label="ScrollCount" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:supportsRtl="true">
+<activity android:icon="@mipmap/ic_launcher_legacy" android:name=".ProbeActivity" android:exported="true" android:launchMode="singleTop">
 <intent-filter android:autoVerify="true"><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="https" android:host="scrollcount-friends.actionbridge.workers.dev" android:pathPrefix="/invite/"/></intent-filter>
 <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="scrollcount" android:host="invite"/></intent-filter><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
 <activity android:name=".OnboardingActivity" android:exported="false"/>
