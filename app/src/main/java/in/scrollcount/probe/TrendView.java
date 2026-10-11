@@ -50,7 +50,7 @@ final class TrendView extends View {
         paint.setStrokeWidth(ui.dp(1));
         c.drawLine(ui.dp(4),bottom,w-ui.dp(4),bottom,paint);
         paint.setTextAlign(Paint.Align.CENTER);
-        paint.setTypeface(Typeface.create("sans-serif-medium",0));
+        paint.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
         paint.setTextSize(11*getResources().getDisplayMetrics().scaledDensity);
         for(int i=0;i<7;i++) {
             long n=days[i].seen+(i==6?liveSeen:0);

@@ -49,12 +49,12 @@ final class Ui {
     }
     LinearLayout column() {
         LinearLayout v=new LinearLayout(activity);
-        v.setOrientation(1);
+        v.setOrientation(LinearLayout.VERTICAL);
         return v;
     }
     LinearLayout row() {
         LinearLayout v=new LinearLayout(activity);
-        v.setOrientation(0);
+        v.setOrientation(LinearLayout.HORIZONTAL);
         v.setGravity(Gravity.CENTER_VERTICAL);
         return v;
     }
@@ -80,7 +80,7 @@ final class Ui {
         Button b=new Button(activity);
         b.setText(label);
         b.setTextSize(14);
-        b.setTypeface(Typeface.create("sans-serif-medium",0));
+        b.setTypeface(Typeface.create("sans-serif-medium",Typeface.NORMAL));
         b.setAllCaps(false);
         b.setTextColor(primary?(dark?0xff142d20:0xffffffff):accent);
         b.setPadding(dp(18),dp(12),dp(18),dp(12));

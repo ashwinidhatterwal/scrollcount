@@ -22,7 +22,7 @@ public final class DiagnosticsActivity extends Activity {
         ScrollView page=new ScrollView(this);
         page.setBackgroundColor(ui.paper);
         LinearLayout body=new LinearLayout(this);
-        body.setOrientation(1);
+        body.setOrientation(LinearLayout.VERTICAL);
         int p=Math.round(18*getResources().getDisplayMetrics().density);
         body.setPadding(p,p,p,p);
         page.addView(body);

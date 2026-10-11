@@ -213,7 +213,7 @@ public final class ProbeActivity extends Activity {
         addCard(platforms);
         LinearLayout tiles=ui.row();
         boolean stacked=getResources().getConfiguration().fontScale>1.2f || getResources().getConfiguration().screenWidthDp<350;
-        if(stacked)tiles.setOrientation(1);
+        if(stacked)tiles.setOrientation(LinearLayout.VERTICAL);
         LinearLayout first=ui.card(),second=ui.card();
         first.addView(ui.text("Feed time",13,ui.muted,false));
         time=ui.text("0s",28,ui.ink,true);
