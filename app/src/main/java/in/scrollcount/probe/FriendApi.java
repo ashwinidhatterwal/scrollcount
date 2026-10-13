@@ -17,7 +17,7 @@ final class FriendApi {
         String server=store.server(),token=store.prefs.getString("token","");
         if(closed)return;
         io.execute(()->{
-            if(!server.equals(store.server())||!token.equals(store.prefs.getString("token",""))){main.post(()->{if(!closed)result.done(null,"Sharing profile changed. Try again.");});return;}
+            if(!server.equals(store.server())||!token.equals(store.prefs.getString("token",""))){main.post(()->{if(!closed)CallbackGuard.run(()->result.done(null,"Sharing profile changed. Try again."),e->ServiceHealth.failure("sharing result",e));});return;}
             JSONObject response=null;String error="";HttpURLConnection c=null;
             try{
                 if(!validServer(server))throw new IOException("Set up the sharing server first");
@@ -32,7 +32,7 @@ final class FriendApi {
                 response=new JSONObject(text.toString());if(status<200||status>=300)error=response.optString("error","Sharing service is unavailable");
             }catch(Exception e){error=e instanceof IOException?"Could not connect. Check your internet and try again.":"Invalid sharing response";}
             finally{if(c!=null)c.disconnect();}
-            JSONObject finalResponse=response;String finalError=error;main.post(()->{if(!closed)result.done(finalResponse,finalError);});
+            JSONObject finalResponse=response;String finalError=error;main.post(()->{if(!closed)CallbackGuard.run(()->result.done(finalResponse,finalError),e->ServiceHealth.failure("sharing result",e));});
         });
     }
     void close(){closed=true;io.shutdown();}

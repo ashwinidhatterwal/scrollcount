@@ -6,7 +6,7 @@ a='{http://schemas.android.com/apk/res/android}'
 manifest=ET.parse(root/'app/src/main/AndroidManifest.xml').getroot()
 assert {p.get(a+'name') for p in manifest.findall('uses-permission')}=={'android.permission.POST_NOTIFICATIONS','android.permission.INTERNET','android.permission.ACCESS_NETWORK_STATE','android.permission.RECEIVE_BOOT_COMPLETED'}
 assert manifest.find('application').get(a+'allowBackup')=='false'
-assert {p.get(a+'name') for p in manifest.findall('queries/package')}=={'com.instagram.android','com.google.android.youtube'}
+assert {p.get(a+'name') for p in manifest.findall('queries/package')}=={'com.instagram.android','com.google.android.youtube','com.instagram.lite','com.facebook.katana','com.facebook.lite','com.snapchat.android'}
 service=ET.parse(root/'app/src/main/res/xml/probe_service.xml').getroot()
 assert service.get(a+'isAccessibilityTool')=='false'
 source=(root/'app/src/main/java/in/scrollcount/probe/ProbeService.java').read_text()
@@ -31,7 +31,7 @@ cipher=(root/'app/src/main/java/in/scrollcount/probe/FriendCipher.java').read_te
 assert 'AES/GCM/NoPadding' in cipher and 'updateAAD' in cipher
 sync=(root/'app/src/main/java/in/scrollcount/probe/FriendSync.java').read_text()
 assert 'storedSharing()' in sync and 'FriendCipher.encrypt' in sync
-assert 'privateKey' not in sync[sync.index('JSONObject request='):sync.index('handler.post(()->{if(g!=generation)return;api.request')]
+assert 'privateKey' not in sync[sync.index('JSONObject request='):sync.index('post(()->{if(g!=generation)return;api.request')]
 print('PASS: narrow permissions, no backup/control, offline counting and isolated opt-in HTTPS signaling, unsupported-app early return, editable/password exclusion and content-free storage')
 
 job=manifest.find("application/service[@"+a+"name='.HourlyFriendJob']")

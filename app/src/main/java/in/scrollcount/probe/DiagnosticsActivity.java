@@ -9,7 +9,7 @@ public final class DiagnosticsActivity extends Activity {
     private TextView output;
     private final Runnable refresh=new Runnable() {
         public void run() {
-            output.setText(ProbeStore.report());
+            output.setText(ProbeStore.report()+"\n\n"+ServiceHealth.report(DiagnosticsActivity.this));
             handler.postDelayed(this,2000);
         }
     };
@@ -38,17 +38,21 @@ public final class DiagnosticsActivity extends Activity {
         body.addView(back);
         TextView note=new TextView(this);
         note.setTextColor(ui.muted);
-        note.setText("Enable Local diagnostics in Settings before a test. Reports stay in memory; release builds never retain tree dumps. Diagnostics are temporary and sanitized. Video changes here differ from 'videos seen': the home screen and Scrolls badge count all confirmed items, including quick skips; Seen applies a 2-second threshold.");
+        note.setText("Enable Local diagnostics in Settings before a test. Service-health events remain locally after restart; label diagnostics stay in memory; release builds never retain tree dumps. Diagnostics are temporary and sanitized. Video changes here differ from 'videos seen': the home screen and Scrolls badge count all confirmed items, including quick skips; Seen applies a 2-second threshold.");
         body.addView(note);
         Button share=new Button(this);
         share.setText("Share sanitized report");
         share.setOnClickListener(v-> {
             Intent i=new Intent(Intent.ACTION_SEND);
             i.setType("text/plain");
-            i.putExtra(Intent.EXTRA_TEXT,ProbeStore.report());
+            i.putExtra(Intent.EXTRA_TEXT,ProbeStore.report()+"\n\n"+ServiceHealth.report(this));
             startActivity(Intent.createChooser(i,"Share diagnostics"));
         });
         body.addView(share);
+        Button clear=new Button(this);
+        clear.setText("Clear service health log");
+        clear.setOnClickListener(v->ServiceHealth.clear(this));
+        body.addView(clear);
         output=new TextView(this);
         output.setTextSize(13);
         output.setTextColor(ui.ink);

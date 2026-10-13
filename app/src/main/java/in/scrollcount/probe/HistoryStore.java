@@ -26,7 +26,7 @@ final class HistoryStore extends SQLiteOpenHelper implements CountingEngine.Sink
     private final java.util.concurrent.CopyOnWriteArrayList<Runnable> countListeners=new java.util.concurrent.CopyOnWriteArrayList<>();
     void observeCounts(Runnable listener){countListeners.addIfAbsent(listener);}
     void unobserveCounts(Runnable listener){countListeners.remove(listener);}
-    private void countsChanged(){main.post(()->{for(Runnable listener:countListeners)listener.run();});}
+    private void countsChanged(){main.post(()->{for(Runnable listener:countListeners)CallbackGuard.run(listener,error->ServiceHealth.failure("history listener",error));});}
     private final Handler main=new Handler(Looper.getMainLooper());
     private HistoryStore(Context c) {
         super(c,"scrollcount.db",null,3);
@@ -170,7 +170,7 @@ final class HistoryStore extends SQLiteOpenHelper implements CountingEngine.Sink
         });
     }
     static final class Day {
-        long start,seen,instagram,youtube,skips,longer,duration,sessions,longest;
+        long start,seen,instagram,youtube,facebook,snapchat,skips,longer,duration,sessions,longest;
     }
     static final class Session {
         String platform;
@@ -178,7 +178,7 @@ final class HistoryStore extends SQLiteOpenHelper implements CountingEngine.Sink
         boolean open;
     }
     static final class Stats {
-        long instagramItems,youtubeItems,seen,instagram,youtube,skips,longer,duration,lifetime,lifetimeDuration,sessions,longest,first,revision,previousSeen;
+        long instagramItems,youtubeItems,facebookItems,snapchatItems,seen,instagram,youtube,skips,longer,duration,lifetime,lifetimeDuration,sessions,longest,first,revision,previousSeen;
         final Day[] days=new Day[7];
         final ArrayList<Session> recent=new ArrayList<>();
         Stats() {
@@ -203,7 +203,7 @@ final class HistoryStore extends SQLiteOpenHelper implements CountingEngine.Sink
                     "SELECT platform,COUNT(*) FROM detected WHERE started_at>=? AND started_at<? GROUP BY platform",
                     new String[]{String.valueOf(start),String.valueOf(end)})) {
                 while(rows.moveToNext()) {
-                    if(rows.getString(0).equals("Instagram"))totals[0]=rows.getLong(1);
+                    if(!rows.getString(0).equals("YouTube"))totals[0]+=rows.getLong(1);
                     if(rows.getString(0).equals("YouTube"))totals[1]=rows.getLong(1);
                 }
                 totals[3]=1;
@@ -247,7 +247,9 @@ final class HistoryStore extends SQLiteOpenHelper implements CountingEngine.Sink
                             else {
                                 d.seen+=count;
                                 if(platform.equals("Instagram"))d.instagram+=count;
-                                else d.youtube+=count;
+                                else if(platform.equals("YouTube"))d.youtube+=count;
+                                else if(platform.equals("Facebook"))d.facebook+=count;
+                                else if(platform.equals("Snapchat"))d.snapchat+=count;
                                 if(category.equals("LONGER"))d.longer+=count;
                             }
                         }
@@ -266,6 +268,8 @@ final class HistoryStore extends SQLiteOpenHelper implements CountingEngine.Sink
                     while(rows.moveToNext()) {
                         if(rows.getString(0).equals("Instagram"))s.instagramItems=rows.getLong(1);
                         if(rows.getString(0).equals("YouTube"))s.youtubeItems=rows.getLong(1);
+                        if(rows.getString(0).equals("Facebook"))s.facebookItems=rows.getLong(1);
+                        if(rows.getString(0).equals("Snapchat"))s.snapchatItems=rows.getLong(1);
                     }
                 }
                 s.seen=today.seen;

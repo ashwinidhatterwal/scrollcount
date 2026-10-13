@@ -9,15 +9,15 @@ public final class InstagramSignals {
     }
     public static boolean player(String id) {
         String name=localId(id);
-        return name.equals("clips_viewer_view_pager") || name.equals("clips_video_container");
+        return name.equals("clips_viewer_view_pager") || name.equals("clips_video_container") || name.equals("reels_viewer_view_pager") || name.equals("reel_viewer_view_pager");
     }
     public static boolean author(String id) {
-        return localId(id).equals("clips_author_username");
+        return localId(id).equals("clips_author_username") || localId(id).equals("reel_author_username");
     }
     public static boolean caption(String id) {
-        return localId(id).equals("clips_caption_component");
+        return localId(id).equals("clips_caption_component") || localId(id).equals("reel_caption");
     }
     public static boolean pagerScroll(String id,String type,int from,int to) {
-        return localId(id).equals("clips_viewer_view_pager") && type.endsWith("ViewPager") && from>=0 && from==to;
+        return (localId(id).equals("clips_viewer_view_pager") || localId(id).equals("reels_viewer_view_pager") || localId(id).equals("reel_viewer_view_pager")) && (type.endsWith("ViewPager") || type.endsWith("ViewPager2")) && from>=0 && from==to;
     }
 }

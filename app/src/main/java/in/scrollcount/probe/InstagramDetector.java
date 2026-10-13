@@ -1,7 +1,10 @@
 package in.scrollcount.probe;
 final class InstagramDetector implements ShortVideoDetector {
+    private final String pkg;
+    InstagramDetector() { this(InstagramSignals.PACKAGE); }
+    InstagramDetector(String pkg) { this.pkg=pkg; }
     public String packageName() {
-        return InstagramSignals.PACKAGE;
+        return pkg;
     }
     public String platformName() {
         return "Instagram";
@@ -13,10 +16,10 @@ final class InstagramDetector implements ShortVideoDetector {
         return false;
     }
     public int maxNodes() {
-        return 180;
+        return 360;
     }
     public int maxDepth() {
-        return 24;
+        return 48;
     }
     public boolean movement(String id,String type,int from,int to) {
         return InstagramSignals.pagerScroll(id,type,from,to);

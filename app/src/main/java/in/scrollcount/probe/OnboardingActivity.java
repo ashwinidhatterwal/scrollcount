@@ -12,8 +12,8 @@ public final class OnboardingActivity extends Activity {
     private int readinessChecks;
     private final Runnable ready=new Runnable() {
         public void run() {
-            if(getSharedPreferences("privacy",0).getInt("consentVersion",0)>=2 && ProbeStore.connected)finish();
-            else if(getSharedPreferences("privacy",0).getInt("consentVersion",0)>=2 && ++readinessChecks<10)handler.postDelayed(this,1000);
+            if(getSharedPreferences("privacy",0).getInt("consentVersion",0)>=3 && ProbeStore.connected)finish();
+            else if(getSharedPreferences("privacy",0).getInt("consentVersion",0)>=3 && ++readinessChecks<10)handler.postDelayed(this,1000);
         }
     };
     private Ui ui;
@@ -56,7 +56,7 @@ public final class OnboardingActivity extends Activity {
             p.setMargins(0,0,0,ui.dp(28));
             content.addView(icon,p);
             content.addView(ui.text("Know how much\nyou scroll.",36,ui.ink,true));
-            content.addView(ui.text("A private counter for Instagram Reels and YouTube Shorts.",17,ui.muted,false));
+            content.addView(ui.text("A private counter for Instagram / Facebook Reels, YouTube Shorts and Snapchat Spotlight.",17,ui.muted,false));
             ui.gap(content,28);
             feature("A clearer picture","See counts, feed time and the patterns across your week.");
             feature("Automatic after setup","Use your apps normally. ScrollCount works in the background.");
@@ -77,7 +77,7 @@ public final class OnboardingActivity extends Activity {
             ui.gap(content,16);
             content.addView(ui.text("You stay in control. Counting can be paused at any time.",13,ui.muted,false));
             actions.addView(ui.button("Agree and open settings",true,()-> {
-                getSharedPreferences("privacy",0).edit().putInt("consentVersion",2).putBoolean("running",true).apply();
+                getSharedPreferences("privacy",0).edit().putInt("consentVersion",3).putBoolean("running",true).apply();
                 startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
             }));
             ui.gap(actions,8);

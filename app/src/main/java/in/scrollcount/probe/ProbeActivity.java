@@ -18,10 +18,10 @@ public final class ProbeActivity extends Activity {
     private LinearLayout root,body,nav,onboardingCard;
     private ScrollView page;
     private int tab;
-    private TextView dateLabel,watched,total,time,skips,instagram,youtube,average,longer,longest,lifetime,lifetimeDetail,status,detail,error,goalText,weekTotal,weekDetail;
+    private TextView dateLabel,watched,total,time,skips,instagram,youtube,facebook,snapchat,average,longer,longest,lifetime,lifetimeDetail,status,detail,error,goalText,weekTotal,weekDetail;
     private Button toggle;
     private LinearLayout countingState;
-    private ProgressBar igBar,ytBar,goalBar;
+    private ProgressBar igBar,ytBar,fbBar,snapBar,goalBar;
     private TrendView trend;
     private LinearLayout sessions;
     private HistoryStore.Stats stats=new HistoryStore.Stats();
@@ -52,9 +52,11 @@ public final class ProbeActivity extends Activity {
     };
     @Override public void onCreate(Bundle state) {
         prefs=getSharedPreferences("privacy",0);
+        Detectors.load(getSharedPreferences("supported_apps",0).getAll());
         boolean dark=prefs.getBoolean("dark",false);
         setTheme(dark?android.R.style.Theme_Material_NoActionBar:android.R.style.Theme_Material_Light_NoActionBar);
         super.onCreate(state);
+        ServiceHealth.attach(this);
         history=HistoryStore.get(this);
         ui=new Ui(this,dark);
         if(state!=null) {
@@ -65,6 +67,7 @@ public final class ProbeActivity extends Activity {
         if(firstOpen) {
             android.content.SharedPreferences.Editor edit=prefs.edit().putBoolean("firstOpen",true);
             if(!prefs.contains("running"))edit.putBoolean("running",true);
+            if(!prefs.contains("liveBadge"))edit.putBoolean("liveBadge",true);
             edit.apply();
         }
         readVersions();
@@ -97,7 +100,7 @@ public final class ProbeActivity extends Activity {
         root.addView(nav);
         showTab(tab);
         boolean invited=handleInvitation(getIntent());
-        if(!invited && firstOpen && prefs.getInt("consentVersion",0)<2)onboarding();
+        if(!invited && prefs.getInt("consentVersion",0)<3)onboarding();
     }
     @Override protected void onNewIntent(Intent intent){
         super.onNewIntent(intent);setIntent(intent);handleInvitation(intent);
@@ -205,11 +208,17 @@ public final class ProbeActivity extends Activity {
         addCard(hero);
         LinearLayout platforms=ui.card();
         ui.heading(platforms,"By App",null);
-        instagram=platformRow(platforms,"Reels",0xffac4b77);
+        instagram=platformRow(platforms,"Instagram",0xffac4b77);
         igBar=bar(platforms,0xffac4b77);
         ui.gap(platforms,14);
-        youtube=platformRow(platforms,"Shorts",0xffbd5650);
+        youtube=platformRow(platforms,"YouTube",0xffbd5650);
         ytBar=bar(platforms,0xffbd5650);
+        ui.gap(platforms,14);
+        facebook=platformRow(platforms,"Facebook",0xff477abe);
+        fbBar=bar(platforms,0xff477abe);
+        ui.gap(platforms,14);
+        snapchat=platformRow(platforms,"Snapchat",0xffb88a16);
+        snapBar=bar(platforms,0xffb88a16);
         addCard(platforms);
         LinearLayout tiles=ui.row();
         boolean stacked=getResources().getConfiguration().fontScale>1.2f || getResources().getConfiguration().screenWidthDp<350;
@@ -339,12 +348,41 @@ public final class ProbeActivity extends Activity {
             ui.gap(sessions,12);
         }
     }
+    private void modifiedApps() {
+        String[] names={"Instagram", "YouTube", "Instagram Lite", "Facebook", "Snapchat"};
+        String[] packages={InstagramSignals.PACKAGE,YouTubeSignals.PACKAGE,"com.instagram.lite","com.facebook.katana","com.snapchat.android"};
+        new AlertDialog.Builder(this).setTitle("Original app").setItems(names,(dialog,which)-> {
+            Intent launch=new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
+            java.util.TreeMap<String,String> apps=new java.util.TreeMap<>();
+            for(android.content.pm.ResolveInfo item:getPackageManager().queryIntentActivities(launch,0)) {
+                String pkg=item.activityInfo.packageName;
+                if(!pkg.equals(getPackageName()))apps.put(item.loadLabel(getPackageManager())+" · "+pkg,pkg);
+            }
+            String[] labels=apps.keySet().toArray(new String[0]);
+            if(labels.length==0) { message("Modified apps","No installed apps available."); return; }
+            new AlertDialog.Builder(this).setTitle("Choose modified app").setItems(labels,(d,index)-> {
+                String pkg=apps.get(labels[index]);
+                new AlertDialog.Builder(this).setTitle("Enable counting?").setMessage("ScrollCount will inspect this app's visible short-video player using the "+names[which]+" detection profile. Only choose a modified version of that app. Changed layouts may need diagnostics.")
+                    .setPositiveButton("Enable",(confirm,button)-> {
+                        getSharedPreferences("supported_apps",0).edit().putString(pkg,packages[which]).apply();
+                        Detectors.load(getSharedPreferences("supported_apps",0).getAll()); ProbeService.reloadApps();
+                    }).setNegativeButton("Cancel",null).show();
+            }).setNegativeButton("Cancel",null).show();
+        }).setNeutralButton("Remove",(dialog,which)-> {
+            android.content.SharedPreferences saved=getSharedPreferences("supported_apps",0);
+            String[] packagesSaved=saved.getAll().keySet().toArray(new String[0]);
+            new AlertDialog.Builder(this).setTitle("Remove modified app").setItems(packagesSaved,(d,index)-> {
+                saved.edit().remove(packagesSaved[index]).apply();
+                Detectors.load(getSharedPreferences("supported_apps",0).getAll()); ProbeService.reloadApps();
+            }).setNegativeButton("Cancel",null).show();
+        }).setNegativeButton("Cancel",null).show();
+    }
     private void settingsPage() {
         title("Settings","Preferences");
         LinearLayout counting=ui.card();
         ui.heading(counting,"Counting",null);
         switchRow(counting,"Automatic counting","Requires Accessibility",prefs.getBoolean("running",false),enabled-> {
-            if(enabled && (prefs.getInt("consentVersion",0)<2 || !ProbeStore.connected)) {
+            if(enabled && (prefs.getInt("consentVersion",0)<3 || !ProbeStore.connected)) {
                 showTab(3);
                 onboarding();
                 return;
@@ -353,6 +391,11 @@ public final class ProbeActivity extends Activity {
         });
         counting.addView(ui.text(ProbeStore.connected?"Accessibility service connected":"Accessibility service needs enabling",12,ui.muted,false));
         counting.addView(ui.button("Accessibility settings",false,()->startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))));
+        counting.addView(ui.button("Background settings",false,()-> {
+            try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); }
+            catch(RuntimeException missing) { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+getPackageName()))); }
+        }));
+        counting.addView(ui.button("Modified apps",false,this::modifiedApps));
         addCard(counting);
         LinearLayout appearance=ui.card();
         ui.heading(appearance,"Appearance",null);
@@ -442,7 +485,7 @@ public final class ProbeActivity extends Activity {
     private void footer() {
         ui.gap(body,10);
         body.addView(ui.text("Private counting. Optional sharing. Just awareness.",12,ui.muted,false));
-        body.addView(ui.text("ScrollCount 1.2.1",11,ui.muted,false));
+        body.addView(ui.text("ScrollCount 1.2.8",11,ui.muted,false));
         error=ui.text("",13,ui.dark?0xffffb6ac:0xffa13c30,false);
         body.addView(error);
     }
@@ -455,13 +498,17 @@ public final class ProbeActivity extends Activity {
         long seen=stats.seen+plusSeen,duration=stats.duration+(current?live.duration:0),all=stats.lifetime+(live!=null && live.duration>=2000?1:0);
         if(total!=null) {
             dateLabel.setText(date(System.currentTimeMillis(),"EEEE, d MMMM"));
-            long detected=stats.instagramItems+stats.youtubeItems;
+            long detected=stats.instagramItems+stats.youtubeItems+stats.facebookItems+stats.snapchatItems;
             total.setText(loadedRevision<0?"—":Ui.number(detected));
             watched.setText(Ui.number(seen));
             time.setText(Ui.duration(duration));
             skips.setText(Ui.number(stats.skips));
             instagram.setText(Ui.number(stats.instagramItems));
             youtube.setText(Ui.number(stats.youtubeItems));
+            facebook.setText(Ui.number(stats.facebookItems));
+            snapchat.setText(Ui.number(stats.snapchatItems));
+            fbBar.setProgress(detected==0?0:(int)(stats.facebookItems*1000/detected));
+            snapBar.setProgress(detected==0?0:(int)(stats.snapchatItems*1000/detected));
             igBar.setProgress(detected==0?0:(int)(stats.instagramItems*1000/detected));
             ytBar.setProgress(detected==0?0:(int)(stats.youtubeItems*1000/detected));
             long items=stats.seen+stats.skips+(current?1:0);
@@ -471,12 +518,12 @@ public final class ProbeActivity extends Activity {
             lifetime.setText(Ui.number(all)+" seen");
             long first=stats.first>0?stats.first:live!=null?live.startedAt:0;
             lifetimeDetail.setText(first==0?"History begins when you start counting.":Ui.duration(stats.lifetimeDuration+(live!=null?live.duration:0))+" in feeds · Since "+date(first,"d MMM yyyy"));
-            boolean ready=prefs.getInt("consentVersion",0)>=2 && ProbeStore.connected,running=prefs.getBoolean("running",false);
+            boolean ready=prefs.getInt("consentVersion",0)>=3 && ProbeStore.connected,running=prefs.getBoolean("running",false);
             onboardingCard.setVisibility(ready?View.GONE:View.VISIBLE);
             countingState.setVisibility(ready?View.VISIBLE:View.GONE);
             toggle.setVisibility(ready?View.VISIBLE:View.GONE);
             status.setText(!ready?"Set up automatic counting":running?"Counting is on":"Counting is paused");
-            detail.setText(!ready?"Enable Accessibility once to get started.":running?"Works while this app is closed.":"Saved history stays safe.");
+            detail.setText(!ready?"Check Accessibility settings: access is off or the service is disconnected.":running?"Works while this app is closed.":"Saved history stays safe.");
             toggle.setText(running?"Pause":"Resume");
             int goal=prefs.getInt("dailyGoal",0);
             goalText.setText(goal==0?"Set a goal in Settings":seen<goal?Ui.number(seen)+" of "+Ui.number(goal)+" seen today · "+Ui.number(goal-seen)+" to your chosen limit":"You've reached your chosen limit of "+Ui.number(goal)+" seen. Pause whenever you like.");
@@ -518,7 +565,7 @@ public final class ProbeActivity extends Activity {
         CountingEngine.Live live=ProbeService.live();
         boolean today=index==6 && live!=null && live.startedAt>=d.start;
         long seen=d.seen+(today && live.duration>=2000?1:0),duration=d.duration+(today?live.duration:0);
-        message(date(d.start,"EEEE, d MMMM"),"Seen: "+Ui.number(seen)+"\nInstagram: "+Ui.number(d.instagram+(today && live.duration>=2000 && live.platform.equals("Instagram")?1:0))+"\nYouTube: "+Ui.number(d.youtube+(today && live.duration>=2000 && live.platform.equals("YouTube")?1:0))+"\n\nFeed time: "+Ui.duration(duration)+"\nQuick skips: "+Ui.number(d.skips)+"\nLonger views: "+Ui.number(d.longer+(today && live.duration>=10000?1:0)));
+        message(date(d.start,"EEEE, d MMMM"),"Seen: "+Ui.number(seen)+"\nInstagram: "+Ui.number(d.instagram+(today && live.duration>=2000 && live.platform.equals("Instagram")?1:0))+"\nYouTube: "+Ui.number(d.youtube+(today && live.duration>=2000 && live.platform.equals("YouTube")?1:0))+"\nFacebook: "+Ui.number(d.facebook+(today && live.duration>=2000 && live.platform.equals("Facebook")?1:0))+"\nSnapchat: "+Ui.number(d.snapchat+(today && live.duration>=2000 && live.platform.equals("Snapchat")?1:0))+"\n\nFeed time: "+Ui.duration(duration)+"\nQuick skips: "+Ui.number(d.skips)+"\nLonger views: "+Ui.number(d.longer+(today && live.duration>=10000?1:0)));
     }
     private void onboarding() {
         startActivity(new Intent(this,OnboardingActivity.class));
@@ -615,7 +662,7 @@ public final class ProbeActivity extends Activity {
     private void readVersions() {
         StringBuilder versions=new StringBuilder();
         for(String p:new String[] {
-            InstagramSignals.PACKAGE,YouTubeSignals.PACKAGE
+            InstagramSignals.PACKAGE,YouTubeSignals.PACKAGE,"com.instagram.lite","com.facebook.katana","com.facebook.lite","com.snapchat.android"
         }) {
             try {
                 android.content.pm.PackageInfo i=getPackageManager().getPackageInfo(p,0);

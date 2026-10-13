@@ -38,6 +38,7 @@ jobs:
         run: |
           bash tests/run.sh
           python3 tests/history_sql_test.py
+          python3 tests/service_health_test.py
           python3 tests/privacy_test.py
           python3 tests/automatic_sync_test.py
           python3 tests/hourly_job_test.py

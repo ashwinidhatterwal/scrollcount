@@ -1,7 +1,10 @@
 package in.scrollcount.probe;
 final class YouTubeDetector implements ShortVideoDetector {
+    private final String pkg;
+    YouTubeDetector() { this(YouTubeSignals.PACKAGE); }
+    YouTubeDetector(String pkg) { this.pkg=pkg; }
     public String packageName() {
-        return YouTubeSignals.PACKAGE;
+        return pkg;
     }
     public String platformName() {
         return "YouTube";

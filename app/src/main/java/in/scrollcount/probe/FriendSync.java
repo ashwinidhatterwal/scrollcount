@@ -18,9 +18,9 @@ final class FriendSync {
     // Only successfully verified envelopes enter this bounded, in-memory cache.
     private final Map<String,String> verified=new HashMap<>();
     private boolean background,running,busy,automatic,changed,autoQueued;private long generation,lastSync=-120000;private Runnable backgroundDone;
-    private final Runnable loop=new Runnable(){public void run(){if(!running)return;sync(false);handler.postDelayed(this,30000);}};
+    private final Runnable loop=new Runnable(){public void run(){if(!running)return;guard(()->sync(false));if(running)handler.postDelayed(this,30000);}};
     private FriendSync(Context c){context=c;store=FriendStore.get(c);HistoryStore.get(c).observeCounts(this::countsChanged);}
-    private final Runnable autoSend=()->{autoQueued=false;if(!running||busy)return;changed=false;sync(true);};
+    private final Runnable autoSend=()->guard(()->{autoQueued=false;if(!running||busy)return;changed=false;sync(true);});
     private void countsChanged(){
         if(!store.enabled()||!store.storedSharing()||store.id().isEmpty()||store.friends.isEmpty())return;
         changed=true;automatic=true;reconcile();
@@ -37,7 +37,9 @@ final class FriendSync {
         if(wanted&&!running){running=true;generation++;if(!listeners.isEmpty()){lastSync=-120000;handler.post(loop);}}else if(!wanted&&running)stop();
     }
     private void stop(){running=false;busy=false;automatic=false;changed=false;autoQueued=false;generation++;handler.removeCallbacks(loop);handler.removeCallbacks(autoSend);}
-    private void notifyChanged(){for(Listener l:new ArrayList<>(listeners))l.changed();}
+    private void notifyChanged(){for(Listener l:new ArrayList<>(listeners))CallbackGuard.run(l::changed,e->ServiceHealth.failure("sharing listener",e));}
+    private void guard(Runnable action){CallbackGuard.run(action,e->{ServiceHealth.failure("sharing callback",e);stop();status="Sharing paused after an error. Open Friends to retry.";});}
+    private void post(Runnable action){handler.post(()->guard(action));}
     private void sync(boolean force){
         if(!running||busy||(!force&&SystemClock.elapsedRealtime()-lastSync<30000))return;
         busy=true;long g=generation,day=DailyBadge.start(System.currentTimeMillis());status="Syncing…";notifyChanged();
@@ -75,7 +77,7 @@ final class FriendSync {
                     updates.put(new JSONObject().put("to",recipient.getKey()).put("iv",e.iv).put("ciphertext",e.ciphertext));
                 }
                 JSONObject request=new JSONObject().put("key",FriendCipher.encode(pair.getPublic().getEncoded())).put("updates",updates);
-                handler.post(()->{if(g!=generation)return;api.request(store,"/snapshots","POST",request,(r,error)->{
+                post(()->{if(g!=generation)return;api.request(store,"/snapshots","POST",request,(r,error)->{
                     if(g!=generation)return;
                     if(!error.isEmpty()){finish(error.equals("Not found")?"Update the sharing backend to enable saved snapshots":error);return;}
                     try{
@@ -94,7 +96,7 @@ final class FriendSync {
                         decrypt(g,pair,own,r.getJSONArray("snapshots"));
                     }catch(JSONException e){finish("Invalid sharing response. Try again.");}
                 });});
-            }catch(Exception e){handler.post(()->{if(g==generation)finish("Sharing encryption unavailable. Try again or recreate your sharing profile.");});}
+            }catch(Exception e){post(()->{if(g==generation)finish("Sharing encryption unavailable. Try again or recreate your sharing profile.");});}
         });
     }
     private void decrypt(long g,KeyPair pair,String own,JSONArray snapshots){
@@ -110,7 +112,7 @@ final class FriendSync {
                 if(data.length()!=6||data.getInt("v")!=1||!FriendSnapshot.valid(data.getString("day"),data.getLong("reels"),data.getLong("shorts"))||data.getLong("sequence")<=0||data.getLong("captured")<=0)continue;
                 valid.put(sender,data);checked.put(sender,envelope);
             }catch(Exception ignored){try{invalid.add(snapshots.getJSONObject(i).getString("sender"));}catch(Exception absent){}}
-            handler.post(()->{
+            post(()->{
                 if(g!=generation)return;
                 verified.keySet().retainAll(store.friends.keySet());verified.putAll(checked);
                 for(Map.Entry<String,JSONObject> entry:valid.entrySet())try{
@@ -125,6 +127,6 @@ final class FriendSync {
     private void finish(String message){
         busy=false;lastSync=SystemClock.elapsedRealtime();status=message;notifyChanged();
         automatic=false;boolean pending=changed;reconcile();if(pending)countsChanged();
-        Runnable done=backgroundDone;if(background&&done!=null){backgroundDone=null;handler.post(done);}
+        Runnable done=backgroundDone;if(background&&done!=null){backgroundDone=null;post(done);}
     }
 }

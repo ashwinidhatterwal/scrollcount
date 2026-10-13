@@ -22,7 +22,8 @@ public final class ProbeService extends AccessibilityService {
     private final Wellbeing wellbeing=new Wellbeing();
     private long checkpointStart=-1,checkpointDuration;
     private android.content.SharedPreferences preferences;
-    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener preferenceListener=(prefs,key)-> {
+    private final android.content.SharedPreferences.OnSharedPreferenceChangeListener preferenceListener=(prefs,key)-> guard("preferences",()->preferencesChanged(prefs,key));
+    private void preferencesChanged(android.content.SharedPreferences prefs,String key) {
         if("liveBadge".equals(key)) {
             if(!prefs.getBoolean("liveBadge",false)) { if(indicator!=null)indicator.hide(); }
             else refreshIndicator();
@@ -38,9 +39,12 @@ public final class ProbeService extends AccessibilityService {
                 applyProfile();
             }
         }
-    };
+    }
     private final android.content.BroadcastReceiver screenReceiver=new android.content.BroadcastReceiver() {
         @Override public void onReceive(android.content.Context context,android.content.Intent intent) {
+            guard("screen event",()->screenChanged(intent));
+        }
+        private void screenChanged(android.content.Intent intent) {
             if(!android.content.Intent.ACTION_SCREEN_OFF.equals(intent.getAction())) {
                 indicatorDay=-1;
                 refreshIndicator();
@@ -53,6 +57,11 @@ public final class ProbeService extends AccessibilityService {
             youtubeFast.reset();
         }
     };
+    static void reloadApps() {
+        if(activeService==null)return;
+        stopForReset();
+        finishReset();
+    }
     static void stopForReset() {
         ProbeService service=activeService;
         if(service==null)return;
@@ -79,14 +88,17 @@ public final class ProbeService extends AccessibilityService {
     }
     private boolean resettingHistory;
     private boolean trackingAllowed() {
-        return !resettingHistory && preferences!=null && preferences.getBoolean("running",false) && preferences.getInt("consentVersion",0)>=2;
+        return !resettingHistory && preferences!=null && preferences.getBoolean("running",false) && preferences.getInt("consentVersion",0)>=3;
     }
     @Override public void onCreate() {
         super.onCreate();
         activeService=this;
+        ServiceHealth.attach(this);
+        ServiceHealth.event("service created");
         preferences=getSharedPreferences("privacy",0);
+        Detectors.load(getSharedPreferences("supported_apps",0).getAll());
         engine=new CountingEngine(HistoryStore.get(this));
-        FriendSync.get(this);
+        guard("sharing initialization",()->FriendSync.get(this));
         indicator=new PlayerIndicator(this);
         ProbeStore.setDiagnostics(preferences.getBoolean("diagnostics",false),(getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0);
         preferences.registerOnSharedPreferenceChangeListener(preferenceListener);
@@ -94,13 +106,17 @@ public final class ProbeService extends AccessibilityService {
         filter.addAction(android.content.Intent.ACTION_DATE_CHANGED);
         filter.addAction(android.content.Intent.ACTION_TIME_CHANGED);
         filter.addAction(android.content.Intent.ACTION_TIMEZONE_CHANGED);
-        if(android.os.Build.VERSION.SDK_INT>=33) registerReceiver(screenReceiver,filter,android.content.Context.RECEIVER_NOT_EXPORTED);
-        else registerReceiver(screenReceiver,filter);
+        guard("screen receiver registration",()-> {
+            if(android.os.Build.VERSION.SDK_INT>=33) registerReceiver(screenReceiver,filter,android.content.Context.RECEIVER_NOT_EXPORTED);
+            else registerReceiver(screenReceiver,filter);
+        });
     }
     private final Handler handler = new Handler();
     private boolean queued;
     private long generation;
     private int verification;
+    private int unavailableRetries;
+    private long scanCooldown=400;
     private long lastScan, dueAt, scrollUntil, lastSourceSample, instagramConfirmedAt, lastPagerAt, youtubeConfirmedAt;
     private final FastFingerprintTracker youtubeFast=new FastFingerprintTracker();
     private boolean quickQueued;
@@ -108,29 +124,48 @@ public final class ProbeService extends AccessibilityService {
     private long quickGeneration;
     private final Runnable quickTask=()-> {
         quickQueued=false;
-        if(quickGeneration==ProbeStore.generation) readYouTubeFooter();
+        if(quickGeneration==ProbeStore.generation) guard("footer callback",this::readYouTubeFooter);
     };
     private int pagerIndex=-1, acceptedPagerIndex=-1;
     private String sourceSummary="none";
     private final Runnable scanTask = () -> {
         queued=false;
         if(generation != ProbeStore.generation) return;
-        scan();
+        guard("scan callback",this::scan);
     };
     @Override protected void onServiceConnected() {
         ProbeStore.connected=true;
-        applyProfile();
+        ServiceHealth.event("service connected");
+        guard("service profile",this::applyProfile);
     }
     private void applyProfile() {
         AccessibilityServiceInfo info=getServiceInfo();
         if(info==null) return;
-        // YouTube exposes its content labels in the expanded hierarchy; only enable it for YouTube.
+        // Expanded hierarchy recovers labels hidden by Lite layouts and older Android versions.
         ShortVideoDetector detector=Detectors.forPackage(ProbeStore.target);
-        if(detector!=null && detector.expandedHierarchy()) info.flags |= AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
+        if(detector!=null && (detector.expandedHierarchy() || android.os.Build.VERSION.SDK_INT<=30)) info.flags |= AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
         else info.flags &= ~AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
         setServiceInfo(info);
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
+        guard("accessibility event",()->handleEvent(event));
+    }
+    private void guard(String phase,Runnable action) {
+        CallbackGuard.run(action,error-> {
+            ServiceHealth.failure(phase,error);
+            handler.removeCallbacks(scanTask);
+            handler.removeCallbacks(quickTask);
+            queued=quickQueued=false;
+            indicatorQuery=false;
+            hideIndicator();
+            instagramConfirmedAt=youtubeConfirmedAt=0;
+            youtubeFast.reset();
+            ProbeStore.counter.suspend();
+            ProbeStore.status="Temporary service error — timing paused";
+            if(engine!=null)engine.pause(SystemClock.elapsedRealtime());
+        });
+    }
+    private void handleEvent(AccessibilityEvent event) {
         if(!trackingAllowed()) return;
         String pkg=String.valueOf(event.getPackageName());
         // Our badge is a display-only window. Its own events must not close the feed
@@ -203,7 +238,7 @@ public final class ProbeService extends AccessibilityService {
         }
         ProbeStore.events++;
         boolean scroll=event.getEventType()==AccessibilityEvent.TYPE_VIEW_SCROLLED;
-        boolean sampleSource=scroll || (YouTubeSignals.PACKAGE.equals(pkg) && SystemClock.elapsedRealtime()-lastSourceSample>=1000);
+        boolean sampleSource=scroll || (Detectors.youtube(pkg) && SystemClock.elapsedRealtime()-lastSourceSample>=1000);
         if(sampleSource) {
             lastSourceSample=SystemClock.elapsedRealtime();
             String id="", type="";
@@ -251,13 +286,14 @@ public final class ProbeService extends AccessibilityService {
         }
         ProbeStore.add(SystemClock.elapsedRealtime()+" "+AccessibilityEvent.eventTypeToString(event.getEventType())+ " scroll="+event.getScrollY()+" indices="+event.getFromIndex()+":"+event.getToIndex());
         verification=0;
+        unavailableRetries=0;
         // Content-change storms are sampled, not scanned at every progress update.
         schedule(scroll ? 180 : 800);
         maintain(false);
     }
     private void schedule(long delay) {
         long now=SystemClock.elapsedRealtime();
-        long requested=Math.max(now+delay,lastScan+400);
+        long requested=Math.max(now+delay,lastScan+scanCooldown);
         if(queued && requested>=dueAt) return;
         if(queued) handler.removeCallbacks(scanTask);
         generation=ProbeStore.generation;
@@ -278,6 +314,7 @@ public final class ProbeService extends AccessibilityService {
         AccessibilityNodeInfo root=getRootInActiveWindow();
         if(root==null) {
             suspend("No accessible root");
+            if(unavailableRetries++<3)schedule(300L*unavailableRetries);
             return;
         }
         try {
@@ -291,14 +328,15 @@ public final class ProbeService extends AccessibilityService {
                 suspend("Waiting for Reels or Shorts");
                 return;
             }
-            Snapshot s=new Snapshot(ProbeStore.target);
+            unavailableRetries=0;
+            Snapshot s=new Snapshot(ProbeStore.target,getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
             s.indexed=pagerIndex>=0;
             s.walk(root,0);
-            if(YouTubeSignals.PACKAGE.equals(ProbeStore.target)) s.feed |= YouTubeSignals.confirmedContainer(s.ytRecycler,s.ytPage);
-            boolean youtube=YouTubeSignals.PACKAGE.equals(ProbeStore.target);
+            if(Detectors.youtube(ProbeStore.target)) s.feed |= YouTubeSignals.confirmedContainer(s.ytRecycler,s.ytPage);
+            boolean youtube=Detectors.youtube(ProbeStore.target);
             boolean playerStructure=youtube ? s.ytRecycler && s.ytPage : s.feed && s.like && s.share;
             if(playerStructure && !s.overlay && !s.cut) {
-                if(YouTubeSignals.PACKAGE.equals(ProbeStore.target)) collectVisibleYouTubeFooter(root,s);
+                if(Detectors.youtube(ProbeStore.target)) collectVisibleYouTubeFooter(root,s);
                 else if(pagerIndex<0)s.collect(root,0,new int[] {
                     0
                 },false);
@@ -308,7 +346,7 @@ public final class ProbeService extends AccessibilityService {
             ProbeStore.tree=s.structure.toString();
             Rect rootBounds=new Rect();
             root.getBoundsInScreen(rootBounds);
-            String snapshotInfo="at="+SystemClock.elapsedRealtime()+" bounds="+rootBounds.flattenToString()+" nodes="+s.nodes+" truncated="+s.cut+ " feed="+s.feed+" youtubeRecycler="+s.ytRecycler+" youtubePage="+s.ytPage+" like="+s.like+" share="+s.share+" contentFields="+s.fields+ " expandedHierarchy="+YouTubeSignals.PACKAGE.equals(ProbeStore.target);
+            String snapshotInfo="at="+SystemClock.elapsedRealtime()+" bounds="+rootBounds.flattenToString()+" nodes="+s.nodes+" truncated="+s.cut+ " feed="+s.feed+" youtubeRecycler="+s.ytRecycler+" youtubePage="+s.ytPage+" like="+s.like+" share="+s.share+" contentFields="+s.fields+ " expandedHierarchy="+Detectors.youtube(ProbeStore.target);
             long area=(long)Math.max(0,rootBounds.width())*Math.max(0,rootBounds.height());
             long screenArea=(long)getResources().getDisplayMetrics().widthPixels*getResources().getDisplayMetrics().heightPixels;
             long score=(screenArea>0 ? Math.min(1000000,area*1000000/screenArea) : 0)+s.nodes;
@@ -327,7 +365,7 @@ public final class ProbeService extends AccessibilityService {
             boolean movement=instagram ? (pagerIndex>=0 && pagerIndex!=acceptedPagerIndex && SystemClock.elapsedRealtime()<=scrollUntil) : SystemClock.elapsedRealtime()<=scrollUntil;
             long observationTime=SystemClock.elapsedRealtime();
             if(instagram) instagramConfirmedAt=FeedEvidence.update(instagramConfirmedAt,observationTime,eligible,s.feed,s.overlay||s.profile,!s.cut,fullPlayer);
-            else {
+            else if(youtube) {
                 // Container confirmation and label availability are separate. A loading title must
                 // not prevent later scoped retries, but overlays/exits still invalidate the lease.
                 boolean shortsContainer=s.ytRecycler && s.ytPage;
@@ -343,7 +381,7 @@ public final class ProbeService extends AccessibilityService {
                 long positionTime=lastPagerAt>0 && observationTime-lastPagerAt<=2500?lastPagerAt:observationTime;
                 ProbeStore.status=ProbeStore.counter.verifiedPosition(pagerIndex,positionTime,true);
             }
-            else if(!instagram && eligible && ProbeStore.counter.hasBaseline()) {
+            else if(youtube && eligible && ProbeStore.counter.hasBaseline()) {
                 youtubeConfirmedAt=observationTime;
                 acceptYouTubeFingerprint(hash,observationTime);
                 // The fast helper logs its own accepted change.
@@ -352,7 +390,7 @@ public final class ProbeService extends AccessibilityService {
             }
             else {
                 ProbeStore.status=ProbeStore.counter.observe(identity,observationTime,eligible,movement);
-                if(!instagram && ProbeStore.counter.isCommitted(identity)) youtubeFast.seed(identity);
+                if(youtube && ProbeStore.counter.isCommitted(identity)) youtubeFast.seed(identity);
             }
             if(ProbeStore.counter.accepted!=before || ProbeStore.status.startsWith("Baseline acquired")) acceptedPagerIndex=pagerIndex;
             if(ProbeStore.counter.accepted!=before) ProbeStore.transition(SystemClock.elapsedRealtime()+" ACCEPTED_TRANSITION #"+ProbeStore.counter.accepted);
@@ -371,6 +409,7 @@ public final class ProbeService extends AccessibilityService {
             if(eligible && verification++<2) schedule(TransitionProbe.STABLE_MS+50);
         }
         catch(RuntimeException e) {
+            ServiceHealth.failure("screen tree",e);
             suspend("Tree unavailable — no count");
         }
         finally {
@@ -378,6 +417,7 @@ public final class ProbeService extends AccessibilityService {
             long cost=SystemClock.elapsedRealtime()-lastScan;
             ProbeStore.scanTimeMs+=cost;
             ProbeStore.maxScanMs=Math.max(ProbeStore.maxScanMs,cost);
+            scanCooldown=Math.max(400,Math.min(1600,cost*2));
             maintain(false);
         }
     }
@@ -391,13 +431,13 @@ public final class ProbeService extends AccessibilityService {
         if(!youtubeFast.observe(hash,now,true)) return;
         int before=ProbeStore.counter.accepted;
         ProbeStore.status=ProbeStore.counter.verifiedFingerprint(hash,youtubeFast.acceptedAt());
-        engine.observe("YouTube",hash,ProbeStore.counter.committedAt(),now,System.currentTimeMillis());
+        engine.observe(Detectors.forPackage(ProbeStore.target).platformName(),hash,ProbeStore.counter.committedAt(),now,System.currentTimeMillis());
         refreshIndicator();
         if(ProbeStore.counter.accepted!=before) ProbeStore.transition(now+" ACCEPTED_TRANSITION #"+ProbeStore.counter.accepted);
     }
     private void readYouTubeFooter() {
         long now=SystemClock.elapsedRealtime();
-        if(!trackingAllowed() || !YouTubeSignals.PACKAGE.equals(ProbeStore.target) || !FeedEvidence.valid(youtubeConfirmedAt,now) || !youtubeFast.active(now)) return;
+        if(!trackingAllowed() || !Detectors.youtube(ProbeStore.target) || !FeedEvidence.valid(youtubeConfirmedAt,now) || !youtubeFast.active(now)) return;
         PowerManager power=(PowerManager)getSystemService(POWER_SERVICE);
         KeyguardManager keyguard=(KeyguardManager)getSystemService(KEYGUARD_SERVICE);
         if(!power.isInteractive() || keyguard.isKeyguardLocked())return;
@@ -408,11 +448,11 @@ public final class ProbeService extends AccessibilityService {
             return;
         }
         try {
-            if(!YouTubeSignals.PACKAGE.contentEquals(String.valueOf(root.getPackageName())))return;
+            if(!ProbeStore.target.contentEquals(String.valueOf(root.getPackageName())))return;
             Rect bounds=new Rect();
             root.getBoundsInScreen(bounds);
             if(!FeedEvidence.fullPlayer(bounds.width(),bounds.height(),getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels))return;
-            Snapshot snapshot=new Snapshot(YouTubeSignals.PACKAGE);
+            Snapshot snapshot=new Snapshot(ProbeStore.target,getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
             collectVisibleYouTubeFooter(root,snapshot);
             ProbeStore.quickReads++;
             if(snapshot.fields>0) {
@@ -423,6 +463,7 @@ public final class ProbeService extends AccessibilityService {
             else youtubeFast.observe(null,now,false);
         }
         catch(RuntimeException ignored) {
+            ServiceHealth.failure("shorts label read",ignored);
             /* An unavailable label is not a transition. */
         }
         finally {
@@ -436,7 +477,7 @@ public final class ProbeService extends AccessibilityService {
             queueYouTubeRead(quickAttempts<12?70:120);
     }
     private void collectVisibleYouTubeFooter(AccessibilityNodeInfo root,Snapshot snapshot) {
-        java.util.List<AccessibilityNodeInfo> footers=root.findAccessibilityNodeInfosByViewId(YouTubeSignals.PACKAGE+":id/reel_player_footer_container");
+        java.util.List<AccessibilityNodeInfo> footers=root.findAccessibilityNodeInfosByViewId(snapshot.pkg+":id/reel_player_footer_container");
         try {
             AccessibilityNodeInfo best=null;
             long largest=0;
@@ -453,6 +494,7 @@ public final class ProbeService extends AccessibilityService {
             if(best!=null)snapshot.findYouTubeFooter(best,0,new int[] {
                 0
             },false);
+            else snapshot.findYouTubeFooter(root,0,new int[]{0},false);
         }
         finally {
             for(AccessibilityNodeInfo footer:footers)footer.recycle();
@@ -462,7 +504,7 @@ public final class ProbeService extends AccessibilityService {
         int before=ProbeStore.counter.accepted;
         ProbeStore.status=ProbeStore.counter.verifiedPosition(pagerIndex,at,true);
         acceptedPagerIndex=pagerIndex;
-        engine.observe("Instagram","pager:"+pagerIndex,ProbeStore.counter.committedAt(),now,System.currentTimeMillis());
+        engine.observe(Detectors.forPackage(ProbeStore.target).platformName(),"pager:"+pagerIndex,ProbeStore.counter.committedAt(),now,System.currentTimeMillis());
         refreshIndicator();
         if(ProbeStore.counter.accepted!=before) ProbeStore.transition(now+" ACCEPTED_TRANSITION #"+ProbeStore.counter.accepted);
     }
@@ -508,7 +550,7 @@ public final class ProbeService extends AccessibilityService {
         if(indicatorDay!=day)indicator.show(-1);
         if(indicatorQuery)return;
         indicatorQuery=true;
-        history.dailyItems(day,end,totals-> {
+        history.dailyItems(day,end,totals->guard("badge history result",()-> {
             indicatorQuery=false;
             if(activeService!=this)return;
             CountingEngine.Live current=engine.live(SystemClock.elapsedRealtime());
@@ -528,7 +570,7 @@ public final class ProbeService extends AccessibilityService {
             indicatorInstagram=totals[0];
             indicatorYouTube=totals[1];
             refreshIndicator();
-        });
+        }));
     }
     private void hideIndicator() {
         indicatorReady=false;
@@ -544,17 +586,20 @@ public final class ProbeService extends AccessibilityService {
         ProbeStore.fingerprint="";
     }
     @Override public void onInterrupt() {
-        handler.removeCallbacks(scanTask);
-        queued=false;
-        suspend("Accessibility interrupted");
-    }
-    @Override public void onDestroy() {
-        hideIndicator();
+        ServiceHealth.event("service interrupted");
         handler.removeCallbacks(scanTask);
         handler.removeCallbacks(quickTask);
-        if(engine!=null) engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
-        preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener);
-        unregisterReceiver(screenReceiver);
+        queued=quickQueued=false;
+        guard("interrupt",()->suspend("Accessibility interrupted"));
+    }
+    @Override public void onDestroy() {
+        ServiceHealth.event("service destroyed");
+        handler.removeCallbacks(scanTask);
+        handler.removeCallbacks(quickTask);
+        CallbackGuard.run(this::hideIndicator,error->ServiceHealth.failure("badge cleanup",error));
+        CallbackGuard.run(()-> { if(engine!=null)engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis()); },error->ServiceHealth.failure("session cleanup",error));
+        CallbackGuard.run(()-> { if(preferences!=null)preferences.unregisterOnSharedPreferenceChangeListener(preferenceListener); },error->ServiceHealth.failure("preference cleanup",error));
+        CallbackGuard.run(()->unregisterReceiver(screenReceiver),error->ServiceHealth.failure("receiver cleanup",error));
         activeService=null;
         ProbeStore.connected=false;
         ProbeStore.reset("");
@@ -562,14 +607,18 @@ public final class ProbeService extends AccessibilityService {
     }
     private static final class Snapshot {
         final String pkg;
+        final String platform;
+        final java.util.Set<String> socialLabels=new java.util.TreeSet<>();
         final StringBuilder structure=new StringBuilder();
         final Mac mac;
         final java.util.Set<String> youtubeLabels=new java.util.TreeSet<>();
         int nodes,fields,captionFields;
-        final int maxNodes,maxDepth;
+        final int maxNodes,maxDepth,screenWidth,screenHeight;
         boolean feed,like,share,overlay,cut,ytRecycler,ytPage,profile,indexed;
-        Snapshot(String pkg) {
+        Snapshot(String pkg,int screenWidth,int screenHeight) {
+            this.screenWidth=screenWidth; this.screenHeight=screenHeight;
             this.pkg=pkg;
+            platform=Detectors.forPackage(pkg).platformName();
             ShortVideoDetector detector=Detectors.forPackage(pkg);
             maxNodes=detector.maxNodes();
             maxDepth=detector.maxDepth();
@@ -587,7 +636,14 @@ public final class ProbeService extends AccessibilityService {
                 return;
             }
             nodes++;
-            if(!n.isVisibleToUser()) return;
+            if(!n.isVisibleToUser()) {
+                for(int i=0;i<n.getChildCount() && nodes<maxNodes;i++) {
+                    AccessibilityNodeInfo child=n.getChild(i);
+                    if(child!=null)try { walk(child,depth+1); } finally { child.recycle(); }
+                }
+                if(nodes>=maxNodes)cut=true;
+                return;
+            }
             String id=n.getViewIdResourceName();
             id=id==null?"":id;
             String lowerId=id.toLowerCase(Locale.ROOT);
@@ -607,17 +663,20 @@ public final class ProbeService extends AccessibilityService {
             String text=control?String.valueOf(n.getText()).toLowerCase(Locale.ROOT):"";
             String desc=control?String.valueOf(n.getContentDescription()).toLowerCase(Locale.ROOT):"";
             String controls=lowerId+" "+text+" "+desc;
-            feed |= (InstagramSignals.PACKAGE.equals(pkg) ? InstagramSignals.player(id) : lowerId.contains("shorts")) || ((n.isSelected() || !n.isClickable()) && (text.equals("reels") || text.equals("shorts")));
-            if(InstagramSignals.PACKAGE.equals(pkg) && indexed) {
+            Rect nodeBounds=new Rect();
+            n.getBoundsInScreen(nodeBounds);
+            boolean socialPlayer=SocialSignals.player(id,platform) && FeedEvidence.fullPlayer(nodeBounds.width(),nodeBounds.height(),screenWidth,screenHeight);
+            feed |= (Detectors.instagram(pkg) ? InstagramSignals.player(id) : Detectors.youtube(pkg) ? lowerId.contains("shorts") : socialPlayer) || ((Detectors.instagram(pkg) || Detectors.youtube(pkg)) && (n.isSelected() || !n.isClickable()) && (text.equals("reels") || text.equals("shorts") || text.equals("spotlight") || desc.equals("reels") || desc.equals("spotlight")));
+            if(Detectors.instagram(pkg) && indexed) {
                 if(InstagramSignals.author(id) || InstagramSignals.caption(id))fields++;
                 if(InstagramSignals.caption(id))captionFields++;
             }
-            ytRecycler |= YouTubeSignals.PACKAGE.equals(pkg) && YouTubeSignals.recycler(id);
-            ytPage |= YouTubeSignals.PACKAGE.equals(pkg) && YouTubeSignals.page(id);
-            like |= controls.contains("like") || controls.contains("पसंद");
+            ytRecycler |= Detectors.youtube(pkg) && YouTubeSignals.recycler(id);
+            ytPage |= Detectors.youtube(pkg) && YouTubeSignals.page(id);
+            like |= controls.contains("like") || controls.contains("पसंद") || controls.contains("favorite") || controls.contains("favourite");
             share |= controls.contains("share") || controls.contains("send") || controls.contains("शेयर");
             profile |= lowerId.contains("profile_header");
-            overlay |= lowerId.contains("comment_sheet") || lowerId.contains("comments_panel") || lowerId.contains("bottom_sheet") || lowerId.contains("profile_header") || lowerId.contains("share_sheet");
+            overlay |= lowerId.contains("comment_sheet") || lowerId.contains("comments_panel") || lowerId.contains("bottom_sheet") || lowerId.contains("profile_header") || lowerId.contains("share_sheet") || lowerId.contains("chat_input") || lowerId.contains("story_viewer");
             for(int i=0;i<n.getChildCount();i++) {
                 if(nodes>=maxNodes) {
                     cut=true;
@@ -639,14 +698,15 @@ public final class ProbeService extends AccessibilityService {
             String id=n.getViewIdResourceName();
             id=id==null?"":id;
             String lowerId=id.toLowerCase(Locale.ROOT);
-            inCaption |= InstagramSignals.PACKAGE.equals(pkg) && InstagramSignals.caption(id);
+            inCaption |= Detectors.instagram(pkg) ? InstagramSignals.caption(id) : SocialSignals.content(id);
             // Caption content is exposed on anonymous descendants in this Instagram version.
-            boolean contentId=InstagramSignals.PACKAGE.equals(pkg) ? (InstagramSignals.author(id) || inCaption) :lowerId.contains("caption") || lowerId.contains("video_title") || lowerId.contains("reel_description") || lowerId.contains("shorts_description") || lowerId.contains("channel_name") || lowerId.contains("reel_author") || lowerId.contains("video_description");
+            boolean contentId=Detectors.instagram(pkg) ? (InstagramSignals.author(id) || inCaption) :inCaption;
             if(contentId) {
                 String raw=n.getText()!=null?n.getText().toString():n.getContentDescription()!=null?n.getContentDescription().toString():"";
                 if(!raw.trim().isEmpty()) {
                     byte[] value=(id+"\u0000"+raw.trim()+"\u0000").getBytes(StandardCharsets.UTF_8);
-                    mac.update(value);
+                    if(Detectors.instagram(pkg))mac.update(value);
+                    else socialLabels.add(raw.trim());
                     java.util.Arrays.fill(value,(byte)0);
                     fields++;
                     if(inCaption) captionFields++;
@@ -751,6 +811,7 @@ public final class ProbeService extends AccessibilityService {
             if(fields==0) return "";
             // Sort/deduplicate labels so an accessibility wrapper or row-order change does
             // not create a different identity for the same title/channel.
+            for(String label:socialLabels)mac.update(("social-content\u0000"+label+"\u0000").getBytes(StandardCharsets.UTF_8));
             for(String label:youtubeLabels) {
                 byte[] value=("youtube-footer-label\u0000"+label+"\u0000").getBytes(StandardCharsets.UTF_8);
                 mac.update(value);

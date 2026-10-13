@@ -6,6 +6,9 @@ import android.os.Build;
 final class Wellbeing {
     private String remindedSession;
     void observe(Context c,CountingEngine.Live live) {
+        CallbackGuard.run(()->showReminder(c,live),error->ServiceHealth.failure("optional reminder",error));
+    }
+    private void showReminder(Context c,CountingEngine.Live live) {
         if(live==null)return;
         int minutes=c.getSharedPreferences("privacy",0).getInt("reminderMinutes",0);
         if(!ReminderRule.due(minutes,live.sessionDuration,live.paused,live.sessionId.equals(remindedSession)))return;

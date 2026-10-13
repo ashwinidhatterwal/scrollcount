@@ -1,0 +1,26 @@
+"""Execute real service-health storage with fake Android metadata, never app UI data."""
+from pathlib import Path
+import os,subprocess,tempfile
+root=Path(__file__).resolve().parents[1]
+sources={
+'android/content/SharedPreferences.java':'''package android.content;public class SharedPreferences{public String value="";public String getString(String k,String fallback){return value;}public SharedPreferences edit(){return this;}public SharedPreferences putString(String k,String v){value=v;return this;}public SharedPreferences clear(){value="";return this;}public void apply(){}}''',
+'android/content/Context.java':'''package android.content;public class Context{public static final String POWER_SERVICE="power";public final SharedPreferences prefs=new SharedPreferences();public Context getApplicationContext(){return this;}public String getPackageName(){return "in.scrollcount.probe";}public Object getContentResolver(){return this;}public SharedPreferences getSharedPreferences(String n,int m){return prefs;}public Object getSystemService(String n){return new android.os.PowerManager();}public <T>T getSystemService(Class<T> type){return type.cast(new android.app.ActivityManager());}}''',
+'android/content/ComponentName.java':'''package android.content;public class ComponentName{String value;public ComponentName(Context c,Class<?> type){value=c.getPackageName()+"/"+type.getName();}private ComponentName(String s){value=s;}public static ComponentName unflattenFromString(String s){return new ComponentName(s);}public boolean equals(Object other){return other instanceof ComponentName&&value.equals(((ComponentName)other).value);}}''',
+'android/provider/Settings.java':'''package android.provider;public class Settings{public static class Secure{public static final String ENABLED_ACCESSIBILITY_SERVICES="enabled";public static String value="";public static String getString(Object r,String k){return value;}}}''',
+'android/os/Build.java':'''package android.os;public class Build{public static class VERSION{public static int SDK_INT=31;}}''',
+'android/os/SystemClock.java':'''package android.os;public class SystemClock{public static long now=100000;public static long elapsedRealtime(){return now;}}''',
+'android/os/PowerManager.java':'''package android.os;public class PowerManager{public boolean isIgnoringBatteryOptimizations(String pkg){return false;}}''',
+'android/app/ApplicationExitInfo.java':'''package android.app;public class ApplicationExitInfo{public long getTimestamp(){return 123;}public int getReason(){return 4;}public int getStatus(){return 0;}}''',
+'android/app/ActivityManager.java':'''package android.app;import java.util.*;public class ActivityManager{public static int reads;public List<ApplicationExitInfo> getHistoricalProcessExitReasons(String pkg,int pid,int max){reads++;return Collections.singletonList(new ApplicationExitInfo());}}''',
+'in/scrollcount/probe/ProbeService.java':'''package in.scrollcount.probe;class ProbeService{}''',
+'in/scrollcount/probe/ProbeStore.java':'''package in.scrollcount.probe;class ProbeStore{static boolean connected;}''',
+'in/scrollcount/probe/ServiceHealthTest.java':'''package in.scrollcount.probe;public class ServiceHealthTest{static void check(boolean ok,String m){if(!ok)throw new AssertionError(m);}public static void main(String[] args){android.content.Context c=new android.content.Context();ServiceHealth.attach(c);for(int i=0;i<20;i++)ServiceHealth.event("event"+i);check(c.prefs.value.split("\\n").length==12,"bounded twelve-event log");ServiceHealth.failure("scan",new IllegalStateException("PRIVATE CAPTION"));check(!c.prefs.value.contains("PRIVATE CAPTION"),"exception messages never saved");String previous=c.prefs.value;ServiceHealth.failure("scan",new IllegalArgumentException());check(c.prefs.value.equals(previous),"failures rate limited");check(!ServiceHealth.enabled(c),"off is not connected");android.provider.Settings.Secure.value="in.scrollcount.probe/in.scrollcount.probe.ProbeService";check(ServiceHealth.enabled(c),"exact component enabled");android.provider.Settings.Secure.value+="Fake";check(!ServiceHealth.enabled(c),"substring cannot imply enabled");String report=ServiceHealth.report(c);check(report.contains("Java crash")&&report.contains("Android accessibility setting: off"),"real exit metadata independent from toggle");ServiceHealth.report(c);check(android.app.ActivityManager.reads==1,"exit reads cached");ServiceHealth.clear(c);check(c.prefs.value.isEmpty(),"clear removes local evidence");android.os.Build.VERSION.SDK_INT=26;check(!ServiceHealth.report(c).contains("Java crash"),"process-exit API guarded below thirty");System.out.println("PASS: bounded persistent evidence, redacted errors, throttling, exact toggle, process-exit metadata/cache, clear and old-API guard");}}'''
+}
+with tempfile.TemporaryDirectory() as temp:
+ d=Path(temp)
+ for name,text in sources.items():
+  p=d/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
+ java=Path(os.environ['JAVA_HOME'])/'bin'
+ files=[str(p) for p in d.rglob('*.java')]+[str(root/'app/src/main/java/in/scrollcount/probe/ServiceHealth.java')]
+ subprocess.run([str(java/'javac'),'-d',str(d/'classes'),*files],check=True)
+ subprocess.run([str(java/'java'),'-cp',str(d/'classes'),'in.scrollcount.probe.ServiceHealthTest'],check=True)
