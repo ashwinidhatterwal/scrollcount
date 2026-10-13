@@ -63,6 +63,7 @@ final class ServiceHealth {
         return out.toString();
     }
     private static String exitReasons(Context context) {
+        if(Build.VERSION.SDK_INT<30)return "Process exit information requires Android 11 or newer\n";
         StringBuilder out=new StringBuilder("Recent process exits reported by Android (not necessarily service failures):\n");
         try {
             android.app.ActivityManager manager=context.getSystemService(android.app.ActivityManager.class);
