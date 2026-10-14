@@ -27,7 +27,7 @@ doubles = {
  }''',
  'android/view/accessibility/AccessibilityNodeInfo.java': '''package android.view.accessibility;
  public class AccessibilityNodeInfo {
- public String id="",label="",type="android.widget.TextView",pkg="com.instagram.android"; public boolean visible=true,editable,password;
+ public String id="",label="",type="android.widget.TextView",pkg="com.instagram.android"; public boolean visible=true,editable,password,focused;
  public long labelDelay;
  public AccessibilityNodeInfo[] children=new AccessibilityNodeInfo[0];
  public AccessibilityNodeInfo parent;
@@ -35,7 +35,7 @@ doubles = {
  public int getWindowId(){return 11;}
  public int right=800,top=0,bottom=2400,reads;
  public void getBoundsInScreen(android.graphics.Rect r){r.set(0,top,right,bottom);}
- public boolean isVisibleToUser(){return visible;} public boolean isEditable(){return editable;}
+ public boolean isVisibleToUser(){return visible;} public boolean isFocused(){return focused;} public boolean isEditable(){return editable;}
  public boolean isPassword(){return password;} public CharSequence getClassName(){return type;}
  public CharSequence getPackageName(){return pkg;}
  public boolean isSelected(){return false;} public boolean isClickable(){return false;}

@@ -662,7 +662,7 @@ public final class ProbeActivity extends Activity {
     private void readVersions() {
         StringBuilder versions=new StringBuilder();
         for(String p:new String[] {
-            InstagramSignals.PACKAGE,YouTubeSignals.PACKAGE,"com.instagram.lite","com.facebook.katana","com.facebook.lite","com.snapchat.android"
+            getPackageName(),InstagramSignals.PACKAGE,YouTubeSignals.PACKAGE,"com.instagram.lite","com.facebook.katana","com.facebook.lite","com.snapchat.android"
         }) {
             try {
                 android.content.pm.PackageInfo i=getPackageManager().getPackageInfo(p,0);

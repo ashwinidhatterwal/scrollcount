@@ -561,7 +561,7 @@ public final class ProbeService extends AccessibilityService {
         long screenArea=(long)getResources().getDisplayMetrics().widthPixels*getResources().getDisplayMetrics().heightPixels;
         long score=(screenArea>0 ? Math.min(1000000,area*1000000/screenArea) : 0)+s.nodes;
         ProbeStore.retainTree(s.structure.toString(),snapshotInfo,score,s.feed);
-        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", instagramFullVideo="+s.igFullVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+ ", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
+        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", instagramFullVideo="+s.igFullVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+", overlayReasons="+s.overlayReasons+ ", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
         boolean fullPlayer=FeedEvidence.fullPlayer(rootBounds.width(),rootBounds.height(),getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
         if(instagramFrame && instagramPendingAt>=0) {
             long now=SystemClock.elapsedRealtime();
@@ -601,7 +601,7 @@ public final class ProbeService extends AccessibilityService {
             if(FeedEvidence.valid(youtubeConfirmedAt,observationTime) && youtubeFast.active(observationTime))
                 queueYouTubeRead(20);
         }
-        if(!eligible) ProbeStore.decision(observationTime+" SCAN_NOT_CONFIRMED feed="+s.feed+" overlay="+s.overlay+" truncated="+s.cut+" fullPlayer="+fullPlayer+" like="+s.like+" share="+s.share+" youtubeRecycler="+s.ytRecycler+" youtubePage="+s.ytPage+" fields="+s.fields);
+        if(!eligible) ProbeStore.decision(observationTime+" SCAN_NOT_CONFIRMED playerStructure="+playerStructure+" instagramPager="+s.igPager+" instagramVideo="+s.igVideo+" instagramFullVideo="+s.igFullVideo+" feed="+s.feed+" overlay="+s.overlay+" overlayReasons="+s.overlayReasons+" truncated="+s.cut+" fullPlayer="+fullPlayer+" like="+s.like+" share="+s.share+" youtubeRecycler="+s.ytRecycler+" youtubePage="+s.ytPage+" fields="+s.fields);
         if(instagram && eligible && position>=0) {
             instagramConfirmedAt=observationTime;
             boolean unchangedPosition=ProbeStore.counter.isCommitted(identity);
@@ -873,7 +873,8 @@ public final class ProbeService extends AccessibilityService {
         final StringBuilder structure=new StringBuilder();
         final Mac mac;
         final java.util.Set<String> youtubeLabels=new java.util.TreeSet<>();
-        int nodes,visitedNodes,fields,captionFields;
+        int nodes,visitedNodes,fields,captionFields,playerMarkers;
+        String overlayReasons="";
         final int maxNodes,maxDepth,screenWidth,screenHeight;
         final boolean verbose;
         long deadline;
@@ -902,7 +903,8 @@ public final class ProbeService extends AccessibilityService {
             String type=String.valueOf(n.getClassName());
             // Hidden structural wrappers may be traversed; protected subtrees may not.
             if(n.isPassword() || n.isEditable() || type.contains("EditText")) {
-                if(n.isVisibleToUser())overlay=true;
+                if(n.isVisibleToUser() && (!Detectors.instagram(pkg) || n.isPassword() || n.isFocused()))
+                    blockOverlay(n.isPassword()?"password_input":"focused_input");
                 return;
             }
             if(!n.isVisibleToUser()) {
@@ -918,6 +920,7 @@ public final class ProbeService extends AccessibilityService {
                     if(visiblePlayerBounds(bounds)) {
                         boolean pager=InstagramSignals.pager(marker),video=InstagramSignals.video(marker);
                         igPager|=pager;igVideo|=video;igFullVideo|=video;feed|=pager||video;
+                        if(pager || video)playerMarkers++;
                     }
                 }
                 return;
@@ -927,6 +930,11 @@ public final class ProbeService extends AccessibilityService {
             String id=n.getViewIdResourceName();
             id=id==null?"":id;
             String lowerId=id.toLowerCase(Locale.ROOT);
+            boolean instagram=Detectors.instagram(pkg);
+            boolean opener=instagram && (lowerId.endsWith("_button") || lowerId.endsWith("_icon")
+                    || lowerId.endsWith("_button_container") || type.endsWith("Button") || type.endsWith("ImageView"));
+            boolean genericSheet=lowerId.contains("bottom_sheet") && !opener;
+            int markersBefore=playerMarkers;
             if(verbose) {
                 Rect bounds=new Rect();
                 n.getBoundsInScreen(bounds);
@@ -944,12 +952,21 @@ public final class ProbeService extends AccessibilityService {
             igPager |= Detectors.instagram(pkg) && InstagramSignals.pager(id) && visiblePlayerBounds(nodeBounds);
             igVideo |= Detectors.instagram(pkg) && InstagramSignals.video(id);
             igFullVideo |= Detectors.instagram(pkg) && InstagramSignals.video(id) && visiblePlayerBounds(nodeBounds);
+            if(instagram && InstagramSignals.player(id) && visiblePlayerBounds(nodeBounds))playerMarkers++;
             ytRecycler |= Detectors.youtube(pkg) && YouTubeSignals.recycler(id);
             ytPage |= Detectors.youtube(pkg) && YouTubeSignals.page(id);
             like |= controls.contains("like") || controls.contains("पसंद") || controls.contains("favorite") || controls.contains("favourite");
             share |= controls.contains("share") || controls.contains("send") || controls.contains("शेयर");
             profile |= lowerId.contains("profile_header");
-            overlay |= lowerId.contains("comment_sheet") || lowerId.contains("comments_panel") || lowerId.contains("bottom_sheet") || lowerId.contains("profile_header") || lowerId.contains("share_sheet") || lowerId.contains("chat_input") || lowerId.contains("story_viewer");
+            if(!instagram) {
+                if(lowerId.contains("comment_sheet") || lowerId.contains("comments_panel") || lowerId.contains("bottom_sheet")
+                        || lowerId.contains("profile_header") || lowerId.contains("share_sheet") || lowerId.contains("chat_input") || lowerId.contains("story_viewer"))blockOverlay("panel");
+            } else if(!opener) {
+                if(lowerId.contains("comment_sheet") || lowerId.contains("comments_panel"))blockOverlay("comments_panel");
+                if(lowerId.contains("share_sheet"))blockOverlay("share_panel");
+                if(lowerId.contains("profile_header"))blockOverlay("profile");
+                if(lowerId.contains("story_viewer"))blockOverlay("story");
+            }
             for(int i=0;i<n.getChildCount();i++) {
                 if(nodes>=maxNodes) {
                     cut=true;
@@ -965,6 +982,14 @@ public final class ProbeService extends AccessibilityService {
                     }
                 }
             }
+            // Reels itself can be hosted by a bottom-sheet wrapper. Only a sheet
+            // without its own verified player subtree is a blocking generic panel.
+            if(instagram && genericSheet && playerMarkers==markersBefore)blockOverlay("sheet_without_player");
+        }
+        private void blockOverlay(String reason) {
+            overlay=true;
+            if(!overlayReasons.contains(reason) && overlayReasons.length()<160)
+                overlayReasons+=(overlayReasons.isEmpty()?"":",")+reason;
         }
         private boolean visiblePlayerBounds(Rect bounds) {
             int width=Math.max(0,Math.min(screenWidth,bounds.right)-Math.max(0,bounds.left));

@@ -351,13 +351,63 @@ public final class ServicePipelineTest {
         s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(1,4096,source));pump(s,17200);
         check(sink.detected==0,"comments overlay cannot use legacy full-video fallback");
     }
+    static Object overlayLayout(String caption,int variant,boolean focused)throws Exception {
+        Object tree=player(caption,false);
+        if(variant==0) {
+            Object input=node("com.instagram.android:id/comment_input","PRIVATE INPUT",true,node("","PRIVATE CHILD",true));
+            input.getClass().getField("editable").setBoolean(input,true);input.getClass().getField("focused").setBoolean(input,focused);
+            Object root=node("","",true,tree,input);root.getClass().getField("right").setInt(root,1080);return root;
+        }
+        if(variant==1) {
+            Object action=node("com.instagram.android:id/share_sheet_button","Share",true);
+            action.getClass().getField("type").set(action,"android.widget.ImageView");
+            Object root=node("","",true,tree,action);root.getClass().getField("right").setInt(root,1080);return root;
+        }
+        Object root=node("com.instagram.android:id/reels_bottom_sheet","",true,tree);
+        root.getClass().getField("right").setInt(root,1080);return root;
+    }
+    static void overlayAffordancePipeline()throws Exception {
+        for(int variant=0;variant<3;variant++) {
+            Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+            set(s,"reader",new ReadLane((java.util.concurrent.Executor)Runnable::run));set(s,"queued",false);set(s,"generation",ProbeStore.generation);
+            for(int i=0;i<20;i++) {
+                long now=10000+i*3000;time(now);Object tree=overlayLayout("reel-"+i,variant,false);
+                Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,tree);
+                Object source=player("",false);
+                s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(i,4096,source));pump(s,now+2200);
+                if(variant==0) {
+                    Object[] children=(Object[])tree.getClass().getField("children").get(tree);Object input=children[1];
+                    check(input.getClass().getField("reads").getInt(input)==0,"inline typed text is never read");
+                    Object[] privateChildren=(Object[])input.getClass().getField("children").get(input);
+                    check(privateChildren[0].getClass().getField("reads").getInt(privateChildren[0])==0,"private subtree is never read");
+                }
+            }
+            check(sink.detected==20,"FALSE_OVERLAY variant="+variant+" expected 20 exposures, observed "+sink.detected);
+        }
+    }
+    static void actualOverlayPanels()throws Exception {
+        for(int kind=0;kind<6;kind++) {
+            Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+            set(s,"reader",new ReadLane((java.util.concurrent.Executor)Runnable::run));set(s,"queued",false);set(s,"generation",ProbeStore.generation);
+            Object tree=(kind==0 || kind==5)?overlayLayout("typed comment",0,kind==0):node("","",true,player("background reel",false),
+                node("com.instagram.android:id/"+new String[]{"unused","comments_panel","share_sheet","bottom_sheet","story_viewer"}[kind],"",true));
+            tree.getClass().getField("right").setInt(tree,1080);
+            if(kind==5) {
+                Object[] children=(Object[])tree.getClass().getField("children").get(tree);
+                children[1].getClass().getField("password").setBoolean(children[1],true);
+            }
+            Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,tree);
+            s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(0,4096,player("",false)));pump(s,12200);
+            check(sink.detected==0,"actual blocking overlay cannot count background Reels, kind="+kind);
+        }
+    }
     public static void main(String[] args)throws Exception {
         snapshot=Class.forName("in.scrollcount.probe.ProbeService$Snapshot");result=Class.forName("in.scrollcount.probe.ProbeService$ScanResult");
         int failures=0;
-        for(String name:new String[]{"missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded"})try {
+        for(String name:new String[]{"missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels"})try {
             Method test=ServicePipelineTest.class.getDeclaredMethod(name);test.invoke(null);
         }catch(InvocationTargetException e){failures++;System.err.println(name+": "+e.getCause());e.getCause().printStackTrace();}
         check(failures==0,"service pipeline regressions: "+failures);
-        System.out.println("PASS: 17 service cases, six modern traces, late indices and three legacy-layout traces (200 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
+        System.out.println("PASS: 19 service cases, modern/legacy layouts and three overlay-affordance traces (260 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
     }
 }
