@@ -313,27 +313,27 @@ public final class ProbeService extends AccessibilityService {
     private void applySource(String pkg,String id,String type,int from,int to,int eventType,int changeTypes,boolean scroll,long arrivedAt) {
         ShortVideoDetector detector=Detectors.forPackage(pkg);
         if(detector==null)return;
-            sourceSummary="id="+id+" class="+type+" indices="+from+":"+to;
-            long now=SystemClock.elapsedRealtime();
-            if(now-arrivedAt>1500)return;
-            if(scroll && !detector.usesPosition() && detector.movement(id,type,from,to)) {
-                scrollUntil=arrivedAt+5000;
-                youtubeFast.movement(arrivedAt);
-                quickAttempts=0;
-                if(FeedEvidence.valid(youtubeConfirmedAt,now)) queueYouTubeRead(20);
+        sourceSummary="id="+id+" class="+type+" indices="+from+":"+to;
+        long now=SystemClock.elapsedRealtime();
+        if(now-arrivedAt>1500)return;
+        if(scroll && !detector.usesPosition() && detector.movement(id,type,from,to)) {
+            scrollUntil=arrivedAt+5000;
+            youtubeFast.movement(arrivedAt);
+            quickAttempts=0;
+            if(FeedEvidence.valid(youtubeConfirmedAt,now)) queueYouTubeRead(20);
+        }
+        if(scroll && detector.usesPosition() && detector.movement(id,type,from,to)) {
+            if(pagerIndex != from || lastPagerAt==0) {
+                scrollUntil=arrivedAt+2500;
+                lastPagerAt=arrivedAt;
             }
-            if(scroll && detector.usesPosition() && detector.movement(id,type,from,to)) {
-                if(pagerIndex != from || lastPagerAt==0) {
-                    scrollUntil=arrivedAt+2500;
-                    lastPagerAt=arrivedAt;
-                }
-                pagerIndex=from;
-                // Exact indexed player events preserve fast exposures; tree checks stay coalesced.
-                if(FeedEvidence.valid(instagramConfirmedAt,now)) commitInstagramPosition(lastPagerAt,now);
-                else ProbeStore.decision(now+" INDEX_NOT_ACCEPTED index="+pagerIndex+" reason=no_recent_feed_confirmation");
-            }
-            if(scroll) ProbeStore.scroll(SystemClock.elapsedRealtime()+" "+sourceSummary);
-            else ProbeStore.source(SystemClock.elapsedRealtime()+" "+AccessibilityEvent.eventTypeToString(eventType)+" changeTypes="+changeTypes+" "+sourceSummary);
+            pagerIndex=from;
+            // Exact indexed player events preserve fast exposures; tree checks stay coalesced.
+            if(FeedEvidence.valid(instagramConfirmedAt,now)) commitInstagramPosition(lastPagerAt,now);
+            else ProbeStore.decision(now+" INDEX_NOT_ACCEPTED index="+pagerIndex+" reason=no_recent_feed_confirmation");
+        }
+        if(scroll) ProbeStore.scroll(SystemClock.elapsedRealtime()+" "+sourceSummary);
+        else ProbeStore.source(SystemClock.elapsedRealtime()+" "+AccessibilityEvent.eventTypeToString(eventType)+" changeTypes="+changeTypes+" "+sourceSummary);
 
     }
     private void schedule(long delay) {
@@ -450,75 +450,75 @@ public final class ProbeService extends AccessibilityService {
         Snapshot s=result.snapshot;Rect rootBounds=result.bounds;
         boolean youtube=Detectors.youtube(ProbeStore.target);
         boolean playerStructure=youtube?s.ytRecycler&&s.ytPage:s.feed&&s.like&&s.share;
-            ProbeStore.scans++;
-            if(s.cut) ProbeStore.truncated++;
-            ProbeStore.tree=s.structure.toString();
+        ProbeStore.scans++;
+        if(s.cut) ProbeStore.truncated++;
+        ProbeStore.tree=s.structure.toString();
 
-            String snapshotInfo="at="+SystemClock.elapsedRealtime()+" bounds="+rootBounds.flattenToString()+" nodes="+s.nodes+" truncated="+s.cut+ " feed="+s.feed+" youtubeRecycler="+s.ytRecycler+" youtubePage="+s.ytPage+" like="+s.like+" share="+s.share+" contentFields="+s.fields+ " expandedHierarchy="+Detectors.youtube(ProbeStore.target);
-            long area=(long)Math.max(0,rootBounds.width())*Math.max(0,rootBounds.height());
-            long screenArea=(long)getResources().getDisplayMetrics().widthPixels*getResources().getDisplayMetrics().heightPixels;
-            long score=(screenArea>0 ? Math.min(1000000,area*1000000/screenArea) : 0)+s.nodes;
-            ProbeStore.retainTree(s.structure.toString(),snapshotInfo,score,s.feed);
-            ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", like="+s.like+", share="+s.share+", overlay="+s.overlay+ ", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
-            boolean fullPlayer=FeedEvidence.fullPlayer(rootBounds.width(),rootBounds.height(),getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
-            boolean eligible=playerStructure && !s.overlay && !s.cut && FeedEvidence.identityAvailable(s.fields,Detectors.instagram(ProbeStore.target),pagerIndex) && fullPlayer;
-            indicatorReady=playerStructure && !s.overlay && !s.profile && !s.cut && fullPlayer;
-            String hash=result.hash;
-            ProbeStore.fingerprint=ProbeStore.enabled?hash:"";
-            int before=ProbeStore.counter.accepted;
-            ShortVideoDetector detector=Detectors.forPackage(ProbeStore.target);
-            boolean instagram=detector.usesPosition();
-            // Exact player-pager position distinguishes identical captions and cannot change on a like.
-            String identity=instagram && pagerIndex>=0 ? "pager:"+pagerIndex : hash;
-            boolean movement=instagram ? (pagerIndex>=0 && pagerIndex!=acceptedPagerIndex && SystemClock.elapsedRealtime()<=scrollUntil) : SystemClock.elapsedRealtime()<=scrollUntil;
-            long observationTime=SystemClock.elapsedRealtime();
-            if(instagram) instagramConfirmedAt=FeedEvidence.update(instagramConfirmedAt,observationTime,eligible,s.feed,s.overlay||s.profile,!s.cut,fullPlayer);
-            else if(youtube) {
-                // Container confirmation and label availability are separate. A loading title must
-                // not prevent later scoped retries, but overlays/exits still invalidate the lease.
-                boolean shortsContainer=s.ytRecycler && s.ytPage;
-                youtubeConfirmedAt=FeedEvidence.update(youtubeConfirmedAt,observationTime,
-                        shortsContainer && !s.overlay && !s.profile && !s.cut && fullPlayer,
-                        shortsContainer,s.overlay||s.profile,!s.cut,fullPlayer);
-                if(FeedEvidence.valid(youtubeConfirmedAt,observationTime) && youtubeFast.active(observationTime))
-                    queueYouTubeRead(20);
+        String snapshotInfo="at="+SystemClock.elapsedRealtime()+" bounds="+rootBounds.flattenToString()+" nodes="+s.nodes+" truncated="+s.cut+ " feed="+s.feed+" youtubeRecycler="+s.ytRecycler+" youtubePage="+s.ytPage+" like="+s.like+" share="+s.share+" contentFields="+s.fields+ " expandedHierarchy="+Detectors.youtube(ProbeStore.target);
+        long area=(long)Math.max(0,rootBounds.width())*Math.max(0,rootBounds.height());
+        long screenArea=(long)getResources().getDisplayMetrics().widthPixels*getResources().getDisplayMetrics().heightPixels;
+        long score=(screenArea>0 ? Math.min(1000000,area*1000000/screenArea) : 0)+s.nodes;
+        ProbeStore.retainTree(s.structure.toString(),snapshotInfo,score,s.feed);
+        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", like="+s.like+", share="+s.share+", overlay="+s.overlay+ ", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
+        boolean fullPlayer=FeedEvidence.fullPlayer(rootBounds.width(),rootBounds.height(),getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
+        boolean eligible=playerStructure && !s.overlay && !s.cut && FeedEvidence.identityAvailable(s.fields,Detectors.instagram(ProbeStore.target),pagerIndex) && fullPlayer;
+        indicatorReady=playerStructure && !s.overlay && !s.profile && !s.cut && fullPlayer;
+        String hash=result.hash;
+        ProbeStore.fingerprint=ProbeStore.enabled?hash:"";
+        int before=ProbeStore.counter.accepted;
+        ShortVideoDetector detector=Detectors.forPackage(ProbeStore.target);
+        boolean instagram=detector.usesPosition();
+        // Exact player-pager position distinguishes identical captions and cannot change on a like.
+        String identity=instagram && pagerIndex>=0 ? "pager:"+pagerIndex : hash;
+        boolean movement=instagram ? (pagerIndex>=0 && pagerIndex!=acceptedPagerIndex && SystemClock.elapsedRealtime()<=scrollUntil) : SystemClock.elapsedRealtime()<=scrollUntil;
+        long observationTime=SystemClock.elapsedRealtime();
+        if(instagram) instagramConfirmedAt=FeedEvidence.update(instagramConfirmedAt,observationTime,eligible,s.feed,s.overlay||s.profile,!s.cut,fullPlayer);
+        else if(youtube) {
+            // Container confirmation and label availability are separate. A loading title must
+            // not prevent later scoped retries, but overlays/exits still invalidate the lease.
+            boolean shortsContainer=s.ytRecycler && s.ytPage;
+            youtubeConfirmedAt=FeedEvidence.update(youtubeConfirmedAt,observationTime,
+                    shortsContainer && !s.overlay && !s.profile && !s.cut && fullPlayer,
+                    shortsContainer,s.overlay||s.profile,!s.cut,fullPlayer);
+            if(FeedEvidence.valid(youtubeConfirmedAt,observationTime) && youtubeFast.active(observationTime))
+                queueYouTubeRead(20);
+        }
+        if(!eligible) ProbeStore.decision(observationTime+" SCAN_NOT_CONFIRMED feed="+s.feed+" overlay="+s.overlay+" truncated="+s.cut+" fullPlayer="+fullPlayer+" like="+s.like+" share="+s.share+" youtubeRecycler="+s.ytRecycler+" youtubePage="+s.ytPage+" fields="+s.fields);
+        if(instagram && eligible && pagerIndex>=0) {
+            instagramConfirmedAt=observationTime;
+            long positionTime=lastPagerAt>0 && observationTime-lastPagerAt<=2500?lastPagerAt:observationTime;
+            ProbeStore.status=ProbeStore.counter.verifiedPosition(pagerIndex,positionTime,true);
+        }
+        else if(youtube && eligible && ProbeStore.counter.hasBaseline()) {
+            youtubeConfirmedAt=observationTime;
+            acceptYouTubeFingerprint(hash,observationTime);
+            // The fast helper logs its own accepted change.
+            before=ProbeStore.counter.accepted;
+            if(youtubeFast.active(observationTime)) queueYouTubeRead(20);
+        }
+        else {
+            ProbeStore.status=ProbeStore.counter.observe(identity,observationTime,eligible,movement);
+            if(youtube && ProbeStore.counter.isCommitted(identity)) youtubeFast.seed(identity);
+        }
+        if(ProbeStore.counter.accepted!=before || ProbeStore.status.startsWith("Baseline acquired")) acceptedPagerIndex=pagerIndex;
+        if(ProbeStore.counter.accepted!=before) ProbeStore.transition(SystemClock.elapsedRealtime()+" ACCEPTED_TRANSITION #"+ProbeStore.counter.accepted);
+        if(eligible && ProbeStore.counter.isCommitted(identity)) engine.observe(detector.platformName(),identity,ProbeStore.counter.committedAt(),SystemClock.elapsedRealtime(),System.currentTimeMillis());
+        else if(!eligible) {
+            if(s.profile || (!s.feed && !s.overlay)) {
+                engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
+                ProbeStore.counter.forgetFingerprints();
+                instagramConfirmedAt=lastPagerAt=youtubeConfirmedAt=0;
+                youtubeFast.reset();
             }
-            if(!eligible) ProbeStore.decision(observationTime+" SCAN_NOT_CONFIRMED feed="+s.feed+" overlay="+s.overlay+" truncated="+s.cut+" fullPlayer="+fullPlayer+" like="+s.like+" share="+s.share+" youtubeRecycler="+s.ytRecycler+" youtubePage="+s.ytPage+" fields="+s.fields);
-            if(instagram && eligible && pagerIndex>=0) {
-                instagramConfirmedAt=observationTime;
-                long positionTime=lastPagerAt>0 && observationTime-lastPagerAt<=2500?lastPagerAt:observationTime;
-                ProbeStore.status=ProbeStore.counter.verifiedPosition(pagerIndex,positionTime,true);
-            }
-            else if(youtube && eligible && ProbeStore.counter.hasBaseline()) {
-                youtubeConfirmedAt=observationTime;
-                acceptYouTubeFingerprint(hash,observationTime);
-                // The fast helper logs its own accepted change.
-                before=ProbeStore.counter.accepted;
-                if(youtubeFast.active(observationTime)) queueYouTubeRead(20);
-            }
-            else {
-                ProbeStore.status=ProbeStore.counter.observe(identity,observationTime,eligible,movement);
-                if(youtube && ProbeStore.counter.isCommitted(identity)) youtubeFast.seed(identity);
-            }
-            if(ProbeStore.counter.accepted!=before || ProbeStore.status.startsWith("Baseline acquired")) acceptedPagerIndex=pagerIndex;
-            if(ProbeStore.counter.accepted!=before) ProbeStore.transition(SystemClock.elapsedRealtime()+" ACCEPTED_TRANSITION #"+ProbeStore.counter.accepted);
-            if(eligible && ProbeStore.counter.isCommitted(identity)) engine.observe(detector.platformName(),identity,ProbeStore.counter.committedAt(),SystemClock.elapsedRealtime(),System.currentTimeMillis());
-            else if(!eligible) {
-                if(s.profile || (!s.feed && !s.overlay)) {
-                    engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
-                    ProbeStore.counter.forgetFingerprints();
-                    instagramConfirmedAt=lastPagerAt=youtubeConfirmedAt=0;
-                    youtubeFast.reset();
-                }
-                else engine.pause(SystemClock.elapsedRealtime());
-            }
-            if(!eligible) ProbeStore.status="Unconfirmed feed / overlay / unavailable content signal — no count";
-            // Finite confirmation reads, not a permanent polling loop.
-            if(eligible && verification++<2) schedule(TransitionProbe.STABLE_MS+50);
-            else if(!s.overlay && !s.profile && s.feed && unavailableRetries++<3) {
-                if(!expandedRecovery){expandedRecovery=true;applyProfile();}
-                schedule(600);
-            }
+            else engine.pause(SystemClock.elapsedRealtime());
+        }
+        if(!eligible) ProbeStore.status="Unconfirmed feed / overlay / unavailable content signal — no count";
+        // Finite confirmation reads, not a permanent polling loop.
+        if(eligible && verification++<2) schedule(TransitionProbe.STABLE_MS+50);
+        else if(!s.overlay && !s.profile && s.feed && unavailableRetries++<3) {
+            if(!expandedRecovery){expandedRecovery=true;applyProfile();}
+            schedule(600);
+        }
 
     }
     private void queueYouTubeRead(long delay) {
