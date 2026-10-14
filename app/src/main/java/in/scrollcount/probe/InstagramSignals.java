@@ -11,6 +11,19 @@ public final class InstagramSignals {
         String name=localId(id);
         return name.equals("clips_viewer_view_pager") || name.equals("clips_video_container") || name.equals("reels_viewer_view_pager") || name.equals("reel_viewer_view_pager");
     }
+    public static boolean pager(String id) {
+        String name=localId(id);
+        return name.equals("clips_viewer_view_pager") || name.equals("reels_viewer_view_pager") || name.equals("reel_viewer_view_pager");
+    }
+    public static boolean video(String id) {
+        return localId(id).equals("clips_video_container");
+    }
+    public static boolean playerStructure(boolean pager,boolean video,boolean feed,boolean like,boolean share) {
+        return (pager && video) || (feed && like && share);
+    }
+    public static boolean freshFrame(int capturedIndex,int currentIndex,long lastPositionAt,long now) {
+        return capturedIndex==currentIndex || (currentIndex>=0 && lastPositionAt>0 && now>=lastPositionAt && now-lastPositionAt<=1500);
+    }
     public static boolean author(String id) {
         return localId(id).equals("clips_author_username") || localId(id).equals("reel_author_username");
     }
@@ -18,6 +31,6 @@ public final class InstagramSignals {
         return localId(id).equals("clips_caption_component") || localId(id).equals("reel_caption");
     }
     public static boolean pagerScroll(String id,String type,int from,int to) {
-        return (localId(id).equals("clips_viewer_view_pager") || localId(id).equals("reels_viewer_view_pager") || localId(id).equals("reel_viewer_view_pager")) && (type.endsWith("ViewPager") || type.endsWith("ViewPager2")) && from>=0 && from==to;
+        return pager(id) && from>=0 && from==to;
     }
 }
