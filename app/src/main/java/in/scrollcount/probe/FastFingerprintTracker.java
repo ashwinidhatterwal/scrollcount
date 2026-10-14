@@ -12,6 +12,10 @@ public final class FastFingerprintTracker {
         current=fingerprint;
         candidate=null;
     }
+    public void pause() {
+        candidate=null;
+        movedAt=-1;
+    }
     public void movement(long at) {
         movedAt=at;
     }
