@@ -3,7 +3,6 @@ import java.lang.reflect.*;
 import android.content.SharedPreferences;
 /** Production orchestration: never replace applySource/applyScan with a test algorithm. */
 public final class ServicePipelineTest {
-    static sun.misc.Unsafe unsafe;
     static Class<?> snapshot,result;
     static void check(boolean ok,String message){if(!ok)throw new AssertionError(message);}
     static void set(Object object,String name,Object value)throws Exception {
@@ -26,8 +25,9 @@ public final class ServicePipelineTest {
     }
     static ProbeService service(String pkg,Sink sink)throws Exception {
         ProbeStore.reset(pkg);time(10000);
-        ProbeService s=(ProbeService)unsafe.allocateInstance(ProbeService.class);
-        set(s,"preferences",Proxy.newProxyInstance(ServicePipelineTest.class.getClassLoader(),new Class<?>[]{SharedPreferences.class},(p,m,a)->m.getName().equals("getInt")?3:true));
+        ProbeService s=new ProbeService();
+        SharedPreferences prefs=(SharedPreferences)Proxy.newProxyInstance(ServicePipelineTest.class.getClassLoader(),new Class<?>[]{SharedPreferences.class},(p,m,a)->m.getName().equals("getInt")?(a[0].equals("consentVersion")?3:0):true);
+        set(s,"preferences",prefs);Class.forName("android.content.Context").getField("prefs").set(null,prefs);
         set(s,"engine",new CountingEngine(sink));
         set(s,"handler",new android.os.Handler());
         set(s,"reader",new ReadLane((java.util.concurrent.Executor)r->{}));
@@ -35,6 +35,7 @@ public final class ServicePipelineTest {
         set(s,"instagramIdentity",new InstagramIdentity());
         set(s,"instagramFast",new FastFingerprintTracker());
         set(s,"youtubeFast",new FastFingerprintTracker());
+        set(s,"instagramAliasPosition",-1);set(s,"instagramPlayerWindow",-1);set(s,"playerWindow",11);
         set(s,"pagerIndex",-1);set(s,"acceptedPagerIndex",-1);
         set(s,"sourceSummary","");
         // Suppress scheduled work: this harness supplies deterministic frames explicitly.
@@ -47,7 +48,7 @@ public final class ServicePipelineTest {
         set(snap,"feed",feed);set(snap,"igPager",feed);set(snap,"igVideo",feed);
         set(snap,"like",feed);set(snap,"share",feed);set(snap,"cut",!complete);set(snap,"fields",1);
         Constructor<?> rc=result.getDeclaredConstructor();rc.setAccessible(true);Object out=rc.newInstance();
-        set(out,"snapshot",snap);set(out,"index",index);set(out,"hash",hash);
+        set(out,"snapshot",snap);set(out,"index",index);set(out,"hash",hash);set(out,"window",11);set(out,"at",android.os.SystemClock.elapsedRealtime());
         ((android.graphics.Rect)get(out,"bounds")).set(0,0,1080,2400);
         return out;
     }
@@ -141,14 +142,173 @@ public final class ServicePipelineTest {
             ProbeStore.target,ProbeStore.target+":id/clips_viewer_view_pager","ViewPager",11,11,4096,0,true,12000L);
         check(sink.detected==1 && (Integer)get(s,"pagerIndex")==10 && ProbeStore.expiredSources==1,"late source is rejected and diagnosed, never guessed into a count");
     }
+    static void instagramProfile()throws Exception {
+        ProbeService s=service(InstagramSignals.PACKAGE,new Sink());
+        Object info=Class.forName("android.accessibilityservice.AccessibilityService").getField("info").get(null);
+        info.getClass().getField("flags").setInt(info,0);
+        call(s,"applyProfile",new Class<?>[]{});
+        check((info.getClass().getField("flags").getInt(info)&2)!=0,"INSTAGRAM_HIERARCHY: expanded nodes must be requested before a player marker is found");
+    }
+    static void reusedIndex()throws Exception {
+        Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+        for(int i=0;i<20;i++) {
+            long now=10000+i*3000;
+            source(s,0,0,now);
+            InstagramIdentity mode=(InstagramIdentity)get(s,"instagramIdentity");
+            scan(s,mode.scanIndex((Integer)get(s,"pagerIndex")),"distinct-reel-"+i,true,true,now+200);
+            scan(s,mode.scanIndex((Integer)get(s,"pagerIndex")),"distinct-reel-"+i,true,true,now+900);
+        }
+        check(sink.detected==20,"REUSED_INDEX_FREEZE: verified player movement and distinct stable content must work when every index is zero");
+    }
+    static void hiddenPlayerContainers()throws Exception {
+        Constructor<?> ctor=snapshot.getDeclaredConstructor(String.class,int.class,int.class);ctor.setAccessible(true);
+        Object snap=ctor.newInstance(InstagramSignals.PACKAGE,1080,2400);set(snap,"deadline",20000L);time(10000);
+        Object video=node("com.instagram.android:id/clips_video_container","",false,node("","Visible video surface",true));
+        video.getClass().getField("right").setInt(video,1080);
+        Object pager=node("com.instagram.android:id/clips_viewer_view_pager","",false,video);
+        pager.getClass().getField("right").setInt(pager,1080);
+        Object root=node("","",true,pager);
+        call(snap,"walk",new Class<?>[]{Class.forName("android.view.accessibility.AccessibilityNodeInfo"),int.class},root,0);
+        check((Boolean)get(snap,"igPager") && (Boolean)get(snap,"igVideo"),"HIDDEN_PLAYER_MARKERS: structural wrappers with visible full-player descendants must establish the player");
+        pager.getClass().getField("top").setInt(pager,2600);pager.getClass().getField("bottom").setInt(pager,5000);
+        Object offscreen=ctor.newInstance(InstagramSignals.PACKAGE,1080,2400);set(offscreen,"deadline",20000L);
+        call(offscreen,"walk",new Class<?>[]{Class.forName("android.view.accessibility.AccessibilityNodeInfo"),int.class},root,0);
+        check(!(Boolean)get(offscreen,"igPager"),"offscreen player wrappers cannot establish a visible viewer");
+        Object protectedRoot=node("","Private typed text",false,root);
+        protectedRoot.getClass().getField("editable").setBoolean(protectedRoot,true);
+        Object guarded=ctor.newInstance(InstagramSignals.PACKAGE,1080,2400);set(guarded,"deadline",20000L);
+        call(guarded,"walk",new Class<?>[]{Class.forName("android.view.accessibility.AccessibilityNodeInfo"),int.class},protectedRoot,0);
+        check((Integer)get(guarded,"nodes")==0 && protectedRoot.getClass().getField("reads").getInt(protectedRoot)==0,"hidden editable subtree is not read or traversed");
+    }
+    static void missingSourceMetadata()throws Exception {
+        Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+        source(s,10,10,10000);scan(s,10,"reel-A",true,true,10100);
+        time(12000);call(s,"applySource",new Class<?>[]{String.class,String.class,String.class,int.class,int.class,int.class,int.class,boolean.class,long.class},
+            ProbeStore.target,"","androidx.viewpager.widget.ViewPager",11,11,4096,0,true,12000L);
+        InstagramIdentity mode=(InstagramIdentity)get(s,"instagramIdentity");
+        int index=mode.scanIndex((Integer)get(s,"pagerIndex"));
+        scan(s,index,"reel-B",true,true,12200);scan(s,index,"reel-B",true,true,12900);
+        check(sink.detected==2,"MISSING_SOURCE_FREEZE: current full player + pager class/window metadata confirms stable content without guessing index 11");
+        for(String kind:new String[]{"ScrollView","RecyclerView"}) {
+            time(14000);call(s,"applySource",new Class<?>[]{String.class,String.class,String.class,int.class,int.class,int.class,int.class,boolean.class,long.class},
+                ProbeStore.target,"",kind,12,12,4096,0,true,14000L);
+            scan(s,-1,"action edit",true,true,14200);scan(s,-1,"action edit",true,true,14900);
+        }
+        check(sink.detected==2,"unknown sources cannot authorize caption/comment scrolling");
+        time(16000);call(s,"applySource",new Class<?>[]{String.class,String.class,String.class,int.class,int.class,int.class,int.class,boolean.class,long.class,int.class},
+            ProbeStore.target,"","ViewPager",12,12,4096,0,true,16000L,999);
+        scan(s,-1,"wrong-window",true,true,16200);scan(s,-1,"wrong-window",true,true,16900);
+        check(sink.detected==2,"a different window cannot use player confirmation");
+    }
+    static void ancestorSource()throws Exception {
+        ProbeService s=service(InstagramSignals.PACKAGE,new Sink());
+        Object pager=node("com.instagram.android:id/clips_viewer_view_pager","",true);
+        Object recycler=node("","",true);recycler.getClass().getField("type").set(recycler,"androidx.recyclerview.widget.RecyclerView");
+        recycler.getClass().getField("parent").set(recycler,pager);
+        Class<?> nt=Class.forName("android.view.accessibility.AccessibilityNodeInfo");
+        check(((String)call(s,"instagramPagerAncestor",new Class<?>[]{nt,String.class},recycler,InstagramSignals.PACKAGE)).endsWith("clips_viewer_view_pager"),"descendant recycler inherits verified player scope");
+        for(String excluded:new String[]{"clips_caption_component","comments_panel","profile_header","story_viewer"}) {
+            Object blocked=node("com.instagram.android:id/"+excluded,"",true);
+            blocked.getClass().getField("parent").set(blocked,pager);
+            recycler.getClass().getField("parent").set(recycler,blocked);
+            check(((String)call(s,"instagramPagerAncestor",new Class<?>[]{nt,String.class},recycler,InstagramSignals.PACKAGE)).isEmpty(),"blocked source scope: "+excluded);
+        }
+    }
+    static Object event(int from,int type,Object source)throws Exception {
+        Class<?> c=Class.forName("android.view.accessibility.AccessibilityEvent");Object e=c.getConstructor().newInstance();
+        c.getField("from").setInt(e,from);c.getField("to").setInt(e,from);
+        c.getField("eventType").setInt(e,type);c.getField("source").set(e,source);return e;
+    }
+    static Object player(String caption,boolean hidden)throws Exception {
+        Object author=node("com.instagram.android:id/clips_author_username","same-author",true);
+        Object label=node("com.instagram.android:id/clips_caption_component",caption,true);
+        Object surface=node("","",true);surface.getClass().getField("type").set(surface,"android.view.SurfaceView");
+        Object video=node("com.instagram.android:id/clips_video_container","",!hidden,surface);
+        video.getClass().getField("right").setInt(video,1080);
+        Object pager=node("com.instagram.android:id/clips_viewer_view_pager","",!hidden,video,author,label);
+        pager.getClass().getField("right").setInt(pager,1080);
+        pager.getClass().getField("type").set(pager,"androidx.viewpager.widget.ViewPager");return pager;
+    }
+    static void pump(ProbeService s,long end)throws Exception {
+        Object handler=get(s,"handler");handler.getClass().getMethod("runUntil",long.class).invoke(handler,end);
+    }
+    static void eventPipeline()throws Exception {
+        // Drive real onAccessibilityEvent, readSource, scanTask, readSnapshot and applyScan.
+        // Do not prefill any eligible/player/content fields in this test.
+        for(int variant=0;variant<6;variant++) {
+            Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+            set(s,"reader",new ReadLane((java.util.concurrent.Executor)Runnable::run));
+            set(s,"queued",false);set(s,"generation",ProbeStore.generation);
+            for(int i=0;i<20;i++) {
+                long now=10000+i*(variant==5?20000:3000);time(now);
+                Object tree=player("reel-"+i,variant==3);
+                Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,tree);
+                Object source=(variant==2 || variant==5) && i>0?null:tree;
+                if(variant==4) {
+                    source=node("","",true);source.getClass().getField("type").set(source,"androidx.recyclerview.widget.RecyclerView");
+                    source.getClass().getField("parent").set(source,tree);
+                }
+                Object e=event(variant==1?0:i,4096,source);
+                if(variant==4)e.getClass().getField("type").set(e,"androidx.recyclerview.widget.RecyclerView");
+                s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)e);
+                pump(s,now+2200);
+            }
+            check(sink.detected==20,"EVENT_PIPELINE variant="+variant+" expected 20, got "+sink.detected);
+            check(sink.ends==0,"no false feed exits in the event pipeline");
+        }
+    }
+    static void noCountForActions()throws Exception {
+        Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+        set(s,"reader",new ReadLane((java.util.concurrent.Executor)Runnable::run));set(s,"queued",false);set(s,"generation",ProbeStore.generation);
+        Object tree=player("baseline",false);
+        Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,tree);
+        s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(0,4096,tree));pump(s,12200);
+        int action=0;
+        for(String blocked:new String[]{"clips_caption_component","comments_panel","swipeable_tab_view_pager"}) {
+            long now=15000+action++*5000;time(now);Object source=node("com.instagram.android:id/"+blocked,"",true);
+            source.getClass().getField("type").set(source,"androidx.viewpager.widget.ViewPager");
+            Object next=player("expanded or edited label",false);
+            Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,next);
+            s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(1,4096,source));pump(s,now+2200);
+            check(sink.detected==1,"action/navigation scroll cannot authorize a new Reel: "+blocked);
+        }
+    }
+    static void lateIndexedPipeline()throws Exception {
+        Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+        set(s,"reader",new ReadLane((java.util.concurrent.Executor)Runnable::run));
+        set(s,"queued",false);set(s,"generation",ProbeStore.generation);
+        Object tree=player("same caption on different reels",false);
+        Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,tree);
+        s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(-1,32,tree));
+        pump(s,12200);
+        check(sink.detected==1,"window entry establishes content baseline before any index exists");
+        time(13000);s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(0,4096,tree));pump(s,15200);
+        check(sink.detected==1,"first index binds to the already confirmed item without counting twice");
+        for(int i=1;i<20;i++) {
+            long now=16000+i*3000;time(now);
+            s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(i,4096,tree));pump(s,now+2200);
+        }
+        check(sink.detected==20,"LATE_INDEX_LOCK: later verified indices must count identical captions after an initial content baseline");
+    }
+    static void pendingSuperseded()throws Exception {
+        Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+        source(s,0,0,10000);scan(s,0,"reel-A",true,true,10100);
+        time(30000);call(s,"applySource",new Class<?>[]{String.class,String.class,String.class,int.class,int.class,int.class,int.class,boolean.class,long.class},
+            ProbeStore.target,"","ViewPager",1,1,4096,0,true,30000L);
+        time(30100);Object emptyAlias=frame(ProbeStore.target,0,"",true,true);set(get(emptyAlias,"snapshot"),"fields",0);
+        call(s,"applyScan",new Class<?>[]{result},emptyAlias);
+        source(s,1,1,30200);
+        scan(s,1,"reel-B",true,true,30400);
+        scan(s,((InstagramIdentity)get(s,"instagramIdentity")).scanIndex((Integer)get(s,"pagerIndex")),"reel-B",true,true,31200);
+        check(sink.detected==2,"new exact position supersedes pending missing-source recovery without duplicating its exposure");
+    }
     public static void main(String[] args)throws Exception {
-        Field f=sun.misc.Unsafe.class.getDeclaredField("theUnsafe");f.setAccessible(true);unsafe=(sun.misc.Unsafe)f.get(null);
         snapshot=Class.forName("in.scrollcount.probe.ProbeService$Snapshot");result=Class.forName("in.scrollcount.probe.ProbeService$ScanResult");
         int failures=0;
-        for(String name:new String[]{"missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource"})try {
+        for(String name:new String[]{"missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded"})try {
             Method test=ServicePipelineTest.class.getDeclaredMethod(name);test.invoke(null);
-        }catch(InvocationTargetException e){failures++;System.err.println(name+": "+e.getCause());}
+        }catch(InvocationTargetException e){failures++;System.err.println(name+": "+e.getCause());e.getCause().printStackTrace();}
         check(failures==0,"service pipeline regressions: "+failures);
-        System.out.println("PASS: actual service recovers missing indices without duplicates, pauses partial reads, resumes same reel, closes confirmed exits, traverses hidden wrappers and excludes editable content");
+        System.out.println("PASS: 15 service cases, six real event-pipeline traces plus late indices (140 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
     }
 }

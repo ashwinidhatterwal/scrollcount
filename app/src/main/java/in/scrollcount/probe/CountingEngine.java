@@ -58,6 +58,12 @@ public final class CountingEngine {
         activeSince=elapsed;
         sink.detected(session,platform,startWall);
     }
+    /** Bind another verified key to the same live exposure without creating a record. */
+    public synchronized boolean aliasIdentity(String previous,String next) {
+        if(previous==null || next==null || !previous.equals(identity))return false;
+        identity=next;
+        return true;
+    }
     public synchronized void pause(long now) {
         if(activeSince>=0) {
             accumulated+=Math.max(0,now-activeSince);

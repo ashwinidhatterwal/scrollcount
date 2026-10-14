@@ -19,7 +19,7 @@ public final class InstagramSignals {
         return localId(id).equals("clips_video_container");
     }
     public static boolean playerStructure(boolean pager,boolean video,boolean feed,boolean like,boolean share) {
-        return (pager && video) || (feed && like && share);
+        return pager && (video || (feed && like && share));
     }
     public static boolean freshFrame(int capturedIndex,int currentIndex,long lastPositionAt,long now) {
         return capturedIndex==currentIndex || (currentIndex>=0 && lastPositionAt>0 && now>=lastPositionAt && now-lastPositionAt<=1500);
@@ -32,5 +32,11 @@ public final class InstagramSignals {
     }
     public static boolean pagerScroll(String id,String type,int from,int to) {
         return pager(id) && from>=0 && from==to;
+    }
+    public static boolean pagerClass(String type) {
+        return type!=null && (type.endsWith("ViewPager") || type.endsWith("ViewPager2"));
+    }
+    public static boolean scrollContainer(String type) {
+        return pagerClass(type) || (type!=null && type.endsWith("RecyclerView"));
     }
 }

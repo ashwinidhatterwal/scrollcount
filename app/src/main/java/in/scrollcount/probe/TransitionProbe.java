@@ -21,6 +21,12 @@ public final class TransitionProbe {
     public long committedAt() {
         return committedAt;
     }
+    public boolean aliasIdentity(String previous,String next) {
+        if(previous==null || next==null || !previous.equals(current))return false;
+        current=next;
+        candidate=null;
+        return true;
+    }
     public void suspend() {
         candidate = null;
     }

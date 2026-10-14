@@ -13,7 +13,7 @@ final class InstagramDetector implements ShortVideoDetector {
         return true;
     }
     public boolean expandedHierarchy() {
-        return false;
+        return true;
     }
     public int maxNodes() {
         return 360;
