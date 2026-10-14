@@ -31,6 +31,7 @@ public final class ProbeService extends AccessibilityService {
         if("diagnostics".equals(key)) ProbeStore.setDiagnostics(prefs.getBoolean("diagnostics",false),(getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0);
         if("running".equals(key) || "consentVersion".equals(key)) {
             if(!trackingAllowed()) {
+                invalidateReads();
                 ProbeService.this.handler.removeCallbacks(ProbeService.this.scanTask);
                 queued=false;
                 if(engine!=null) engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
@@ -50,6 +51,7 @@ public final class ProbeService extends AccessibilityService {
                 refreshIndicator();
                 return;
             }
+            invalidateReads();
             if(engine!=null) engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
             hideIndicator();
             ProbeStore.counter.forgetFingerprints();
@@ -66,6 +68,7 @@ public final class ProbeService extends AccessibilityService {
         ProbeService service=activeService;
         if(service==null)return;
         service.resettingHistory=true;
+        service.invalidateReads();
         if(service.engine!=null)service.engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
         service.hideIndicator();
         service.handler.removeCallbacks(service.quickTask);
@@ -86,7 +89,7 @@ public final class ProbeService extends AccessibilityService {
     static CountingEngine.Live live() {
         return activeService==null || activeService.engine==null?null:activeService.engine.live(SystemClock.elapsedRealtime());
     }
-    private boolean resettingHistory;
+    private volatile boolean resettingHistory;
     private boolean trackingAllowed() {
         return !resettingHistory && preferences!=null && preferences.getBoolean("running",false) && preferences.getInt("consentVersion",0)>=3;
     }
@@ -111,10 +114,42 @@ public final class ProbeService extends AccessibilityService {
             else registerReceiver(screenReceiver,filter);
         });
     }
-    private final Handler handler = new Handler();
+    private final Handler handler = new Handler(android.os.Looper.getMainLooper());
+    private final ReadLane reader=new ReadLane((java.util.function.Consumer<RuntimeException>)error->handler.post(()->guard("background reader",()->{throw error;})));
+    private volatile long readEpoch;
+    private volatile boolean destroyed;
+    private int playerWindow=-1;
+    private long sourceSequence;
+    private final java.util.Set<Runnable> readTimers=new java.util.HashSet<>();
+    private void invalidateReads() {
+        readEpoch++;reader.cancelPending();
+        for(Runnable timeout:readTimers)handler.removeCallbacks(timeout);
+        readTimers.clear();
+    }
+    private boolean currentRead(String pkg,long epoch) {
+        return !destroyed && trackingAllowed() && epoch==readEpoch && pkg.equals(ProbeStore.target);
+    }
+    private void submitRead(String key,long epoch,Runnable read,Runnable release) {
+        reader.submit(key,()-> {
+            if(destroyed || epoch!=readEpoch)return;
+            final Runnable timeout=()-> {
+                if(destroyed || epoch!=readEpoch)return;
+                invalidateReads();
+                ServiceHealth.event("accessibility read exceeded two seconds; observation paused");
+                guard("slow reader",()-> {
+                    suspend("Social app is responding slowly — timing paused");
+                    if(unavailableRetries++<3)schedule(600);
+                });
+            };
+            handler.post(()-> {if(!destroyed && epoch==readEpoch){readTimers.add(timeout);handler.postDelayed(timeout,2000);}});
+            try {read.run();}
+            finally {handler.post(()->{handler.removeCallbacks(timeout);readTimers.remove(timeout);});}
+        },release);
+    }
     private boolean queued;
     private long generation;
     private int verification;
+    private boolean expandedRecovery;
     private int unavailableRetries;
     private long scanCooldown=400;
     private long lastScan, dueAt, scrollUntil, lastSourceSample, instagramConfirmedAt, lastPagerAt, youtubeConfirmedAt;
@@ -143,8 +178,9 @@ public final class ProbeService extends AccessibilityService {
         if(info==null) return;
         // Expanded hierarchy recovers labels hidden by Lite layouts and older Android versions.
         ShortVideoDetector detector=Detectors.forPackage(ProbeStore.target);
-        if(detector!=null && (detector.expandedHierarchy() || android.os.Build.VERSION.SDK_INT<=30)) info.flags |= AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
+        if(detector!=null && (detector.expandedHierarchy() || expandedRecovery || android.os.Build.VERSION.SDK_INT<=31)) info.flags |= AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
         else info.flags &= ~AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
+        info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
         setServiceInfo(info);
     }
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
@@ -153,6 +189,7 @@ public final class ProbeService extends AccessibilityService {
     private void guard(String phase,Runnable action) {
         CallbackGuard.run(action,error-> {
             ServiceHealth.failure(phase,error);
+            invalidateReads();
             handler.removeCallbacks(scanTask);
             handler.removeCallbacks(quickTask);
             queued=quickQueued=false;
@@ -172,52 +209,18 @@ public final class ProbeService extends AccessibilityService {
         // or schedule another scan; opening the actual ScrollCount activity still closes it.
         if(indicator!=null && (pkg.equals(getPackageName()) || event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED)
                 && indicator.ownsWindow(event.getWindowId()))return;
-        if(pkg.equals(getPackageName())) {
-            // Some OEMs omit the badge's accessibility window ID. Use active-window
-            // package metadata only, never a node traversal, to distinguish our app
-            // opening from our display-only badge changing.
-            if(event.getEventType()!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)return;
-            AccessibilityNodeInfo active=getRootInActiveWindow();
-            if(active==null) { suspend("Window unavailable — timing paused"); return; }
-            try {
-                if(!getPackageName().contentEquals(String.valueOf(active.getPackageName()))
-                        || "android.widget.TextView".contentEquals(String.valueOf(active.getClassName())))return;
-            } finally {
-                active.recycle();
-            }
-        }
         ShortVideoDetector detector=Detectors.forPackage(pkg);
         if(detector==null) {
-            if(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-                    && !pkg.equals("android") && !pkg.equals("com.android.systemui")) {
-                AccessibilityNodeInfo active=getRootInActiveWindow();
-                if(active!=null) {
-                    boolean stillPlayer;
-                    try {
-                        stillPlayer=ProbeStore.target.contentEquals(String.valueOf(active.getPackageName()));
-                    } finally {
-                        active.recycle();
-                    }
-                    if(stillPlayer) {
-                        suspend("Temporary window — timing paused");
-                        schedule(180);
-                        return;
-                    }
-                }
-            }
-            // Foreground package metadata closes sessions. No unrelated app source/tree/text is accessed.
-            if(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && !pkg.equals("android") && !pkg.equals("com.android.systemui") && !pkg.equals("null")) {
-                engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
-                hideIndicator();
-                ProbeStore.counter.forgetFingerprints();
-                instagramConfirmedAt=lastPagerAt=youtubeConfirmedAt=0;
-                youtubeFast.reset();
-                ProbeStore.status="Waiting for Reels or Shorts";
-            }
-            if((pkg.equals("android") || pkg.equals("com.android.systemui")) && (event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED))suspend("System overlay — timing paused");
+            if(event.getEventType()!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.getEventType()!=AccessibilityEvent.TYPE_WINDOWS_CHANGED)return;
+            if(pkg.equals("null"))return;
+            invalidateReads();
+            engine.pause(SystemClock.elapsedRealtime());
+            if(pkg.equals("android") || pkg.equals("com.android.systemui")) { suspend("System overlay — timing paused"); return; }
+            inspectWindow(pkg);
             return;
         }
         if(!pkg.equals(ProbeStore.target)) {
+            invalidateReads();
             engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
             hideIndicator();
             ProbeStore.reset(pkg);
@@ -234,48 +237,15 @@ public final class ProbeService extends AccessibilityService {
             sourceSummary="none";
             generation=ProbeStore.generation;
             lastScan=lastSourceSample=0;
+            expandedRecovery=false;
             applyProfile();
         }
+        playerWindow=event.getWindowId();
+        if(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)invalidateReads();
         ProbeStore.events++;
         boolean scroll=event.getEventType()==AccessibilityEvent.TYPE_VIEW_SCROLLED;
         boolean sampleSource=scroll || (Detectors.youtube(pkg) && SystemClock.elapsedRealtime()-lastSourceSample>=1000);
-        if(sampleSource) {
-            lastSourceSample=SystemClock.elapsedRealtime();
-            String id="", type="";
-            AccessibilityNodeInfo source=event.getSource();
-            if(source!=null) {
-                try {
-                    if(pkg.equals(String.valueOf(source.getPackageName()))) {
-                        id=source.getViewIdResourceName();
-                        if(id==null) id="";
-                        type=String.valueOf(source.getClassName());
-                    }
-                }
-                finally {
-                    source.recycle();
-                }
-            }
-            sourceSummary="id="+id+" class="+type+" indices="+event.getFromIndex()+":"+event.getToIndex();
-            long now=SystemClock.elapsedRealtime();
-            if(scroll && !detector.usesPosition() && detector.movement(id,type,event.getFromIndex(),event.getToIndex())) {
-                scrollUntil=now+5000;
-                youtubeFast.movement(now);
-                quickAttempts=0;
-                if(FeedEvidence.valid(youtubeConfirmedAt,now)) queueYouTubeRead(20);
-            }
-            if(scroll && detector.usesPosition() && detector.movement(id,type,event.getFromIndex(),event.getToIndex())) {
-                if(pagerIndex != event.getFromIndex() || lastPagerAt==0) {
-                    scrollUntil=now+2500;
-                    lastPagerAt=now;
-                }
-                pagerIndex=event.getFromIndex();
-                // Exact indexed player events preserve fast exposures; tree checks stay coalesced.
-                if(FeedEvidence.valid(instagramConfirmedAt,now)) commitInstagramPosition(lastPagerAt,now);
-                else ProbeStore.decision(now+" INDEX_NOT_ACCEPTED index="+pagerIndex+" reason=no_recent_feed_confirmation");
-            }
-            if(scroll) ProbeStore.scroll(SystemClock.elapsedRealtime()+" "+sourceSummary);
-            else ProbeStore.source(SystemClock.elapsedRealtime()+" "+AccessibilityEvent.eventTypeToString(event.getEventType())+" changeTypes="+event.getContentChangeTypes()+" "+sourceSummary);
-        }
+        if(sampleSource)readSource(event,pkg,scroll);
         if(event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             hideIndicator();
             instagramConfirmedAt=youtubeConfirmedAt=0;
@@ -291,6 +261,81 @@ public final class ProbeService extends AccessibilityService {
         schedule(scroll ? 180 : 800);
         maintain(false);
     }
+    private void inspectWindow(String eventPackage) {
+        final long epoch=readEpoch;
+        final String target=ProbeStore.target;
+        submitRead("window",epoch,()-> {
+            String activePackage="",activeClass="";
+            AccessibilityNodeInfo root=null;
+            try {
+                root=getRootInActiveWindow();
+                if(root!=null){activePackage=String.valueOf(root.getPackageName());activeClass=String.valueOf(root.getClassName());}
+            } catch(RuntimeException error){ServiceHealth.failure("window metadata",error);}
+            finally {if(root!=null)root.recycle();}
+            final String foreground=activePackage,kind=activeClass;
+            handler.post(()->guard("window result",()-> {
+                if(epoch!=readEpoch || destroyed || !trackingAllowed())return;
+                if(eventPackage.equals(getPackageName()) && (foreground.equals(target) || kind.equals("android.widget.TextView"))) {
+                    schedule(180);return;
+                }
+                if(!target.isEmpty() && foreground.equals(target)) {suspend("Temporary window — timing paused");schedule(180);return;}
+                engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
+                hideIndicator();ProbeStore.counter.forgetFingerprints();
+                instagramConfirmedAt=lastPagerAt=youtubeConfirmedAt=0;youtubeFast.reset();
+                ProbeStore.status="Waiting for Reels or Shorts";
+            }));
+        },()->{});
+    }
+    private void readSource(AccessibilityEvent event,String pkg,boolean scroll) {
+        lastSourceSample=SystemClock.elapsedRealtime();
+        final long arrivedAt=lastSourceSample,epoch=readEpoch;
+        final int from=event.getFromIndex(),to=event.getToIndex(),eventType=event.getEventType(),changeTypes=event.getContentChangeTypes();
+        final AccessibilityEvent copy=AccessibilityEvent.obtain(event);
+        String key=scroll?"scroll:"+(sourceSequence++):"source";
+        submitRead(key,epoch,()-> {
+            if(!currentRead(pkg,epoch))return;
+            String id="",type="";
+            AccessibilityNodeInfo node=null;
+            try {
+                node=copy.getSource();
+                if(node!=null && pkg.equals(String.valueOf(node.getPackageName()))) {
+                    id=node.getViewIdResourceName();if(id==null)id="";
+                    type=String.valueOf(node.getClassName());
+                }
+            } catch(RuntimeException error){ServiceHealth.failure("event source",error);}
+            finally {if(node!=null)node.recycle();}
+            final String sourceId=id,sourceType=type;
+            handler.post(()->guard("source result",()-> {
+                if(currentRead(pkg,epoch))applySource(pkg,sourceId,sourceType,from,to,eventType,changeTypes,scroll,arrivedAt);
+            }));
+        },copy::recycle);
+    }
+    private void applySource(String pkg,String id,String type,int from,int to,int eventType,int changeTypes,boolean scroll,long arrivedAt) {
+        ShortVideoDetector detector=Detectors.forPackage(pkg);
+        if(detector==null)return;
+            sourceSummary="id="+id+" class="+type+" indices="+from+":"+to;
+            long now=SystemClock.elapsedRealtime();
+            if(now-arrivedAt>1500)return;
+            if(scroll && !detector.usesPosition() && detector.movement(id,type,from,to)) {
+                scrollUntil=arrivedAt+5000;
+                youtubeFast.movement(arrivedAt);
+                quickAttempts=0;
+                if(FeedEvidence.valid(youtubeConfirmedAt,now)) queueYouTubeRead(20);
+            }
+            if(scroll && detector.usesPosition() && detector.movement(id,type,from,to)) {
+                if(pagerIndex != from || lastPagerAt==0) {
+                    scrollUntil=arrivedAt+2500;
+                    lastPagerAt=arrivedAt;
+                }
+                pagerIndex=from;
+                // Exact indexed player events preserve fast exposures; tree checks stay coalesced.
+                if(FeedEvidence.valid(instagramConfirmedAt,now)) commitInstagramPosition(lastPagerAt,now);
+                else ProbeStore.decision(now+" INDEX_NOT_ACCEPTED index="+pagerIndex+" reason=no_recent_feed_confirmation");
+            }
+            if(scroll) ProbeStore.scroll(SystemClock.elapsedRealtime()+" "+sourceSummary);
+            else ProbeStore.source(SystemClock.elapsedRealtime()+" "+AccessibilityEvent.eventTypeToString(eventType)+" changeTypes="+changeTypes+" "+sourceSummary);
+
+    }
     private void schedule(long delay) {
         long now=SystemClock.elapsedRealtime();
         long requested=Math.max(now+delay,lastScan+scanCooldown);
@@ -300,6 +345,18 @@ public final class ProbeService extends AccessibilityService {
         queued=true;
         dueAt=requested;
         handler.postDelayed(scanTask,Math.max(0,requested-now));
+    }
+    private void leaveFeed(String reason) {
+        invalidateReads();
+        engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
+        hideIndicator();ProbeStore.counter.forgetFingerprints();
+        instagramConfirmedAt=lastPagerAt=youtubeConfirmedAt=0;youtubeFast.reset();
+        pagerIndex=acceptedPagerIndex=-1;ProbeStore.status=reason;
+    }
+    private boolean screenAvailable() {
+        PowerManager power=(PowerManager)getSystemService(POWER_SERVICE);
+        KeyguardManager keyguard=(KeyguardManager)getSystemService(KEYGUARD_SERVICE);
+        return power!=null && keyguard!=null && power.isInteractive() && !keyguard.isKeyguardLocked();
     }
     private void scan() {
         if(ProbeStore.target.isEmpty() || !trackingAllowed()) return;
@@ -311,41 +368,92 @@ public final class ProbeService extends AccessibilityService {
             suspend("Screen locked/off");
             return;
         }
-        AccessibilityNodeInfo root=getRootInActiveWindow();
-        if(root==null) {
-            suspend("No accessible root");
-            if(unavailableRetries++<3)schedule(300L*unavailableRetries);
-            return;
-        }
+        final String pkg=ProbeStore.target;final long epoch=readEpoch;
+        final int index=pagerIndex,window=playerWindow;
+        final Snapshot snapshot=new Snapshot(pkg,getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
+        snapshot.indexed=index>=0;
+        submitRead("scan",epoch,()-> {
+            if(!currentRead(pkg,epoch))return;
+            ScanResult result=readSnapshot(snapshot,index,window,false);
+            handler.post(()->guard("scan result",()-> {
+                if(!currentRead(pkg,epoch))return;
+                ProbeStore.readerDropped=reader.dropped();
+                ProbeStore.scanTimeMs+=result.cost;
+                ProbeStore.maxScanMs=Math.max(ProbeStore.maxScanMs,result.cost);
+                scanCooldown=Math.max(400,Math.min(1600,result.cost*2));
+                if(result.exited){leaveFeed("Waiting for Reels or Shorts");return;}
+                if(result.snapshot==null || SystemClock.elapsedRealtime()-result.at>1500) {
+                    suspend("Accessible player unavailable — timing paused");
+                    if(unavailableRetries++<3)schedule(300L*unavailableRetries);
+                    return;
+                }
+                applyScan(result);maintain(false);
+            }));
+        },()->{});
+    }
+    private static final class ScanResult {
+        Snapshot snapshot;final Rect bounds=new Rect();String hash="";
+        int index;long cost,at;boolean exited;
+    }
+    private ScanResult readSnapshot(Snapshot snapshot,int index,int window,boolean footerOnly) {
+        ScanResult result=new ScanResult();result.index=index;
+        long started=SystemClock.elapsedRealtime();
+        snapshot.deadline=started+1000;
+        AccessibilityNodeInfo root=null;
         try {
-            // Package metadata only; never traverse an unrelated app's tree.
-            if(!ProbeStore.target.contentEquals(String.valueOf(root.getPackageName()))) {
-                engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
-                hideIndicator();
-                ProbeStore.counter.forgetFingerprints();
-                instagramConfirmedAt=lastPagerAt=youtubeConfirmedAt=0;
-                youtubeFast.reset();
-                suspend("Waiting for Reels or Shorts");
-                return;
+            root=readPlayerRoot(snapshot.pkg,window,result);
+            if(root==null)return result;
+            root.getBoundsInScreen(result.bounds);
+            if(footerOnly)collectVisibleYouTubeFooter(root,snapshot);
+            else {
+                snapshot.walk(root,0);
+                if(Detectors.youtube(snapshot.pkg))snapshot.feed|=YouTubeSignals.confirmedContainer(snapshot.ytRecycler,snapshot.ytPage);
+                boolean structure=Detectors.youtube(snapshot.pkg)?snapshot.ytRecycler&&snapshot.ytPage:snapshot.feed&&snapshot.like&&snapshot.share;
+                if(structure && !snapshot.overlay && !snapshot.cut) {
+                    if(Detectors.youtube(snapshot.pkg))collectVisibleYouTubeFooter(root,snapshot);
+                    else if(index<0)snapshot.collect(root,0,new int[]{0},false);
+                }
             }
-            unavailableRetries=0;
-            Snapshot s=new Snapshot(ProbeStore.target,getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
-            s.indexed=pagerIndex>=0;
-            s.walk(root,0);
-            if(Detectors.youtube(ProbeStore.target)) s.feed |= YouTubeSignals.confirmedContainer(s.ytRecycler,s.ytPage);
-            boolean youtube=Detectors.youtube(ProbeStore.target);
-            boolean playerStructure=youtube ? s.ytRecycler && s.ytPage : s.feed && s.like && s.share;
-            if(playerStructure && !s.overlay && !s.cut) {
-                if(Detectors.youtube(ProbeStore.target)) collectVisibleYouTubeFooter(root,s);
-                else if(pagerIndex<0)s.collect(root,0,new int[] {
-                    0
-                },false);
+            if(SystemClock.elapsedRealtime()>snapshot.deadline)snapshot.cut=true;
+            result.snapshot=snapshot;result.hash=snapshot.finish();
+        } catch(RuntimeException error){ServiceHealth.failure("background screen read",error);}
+        finally {if(root!=null)root.recycle();result.at=SystemClock.elapsedRealtime();result.cost=result.at-started;}
+        return result;
+    }
+    /** Only package/window metadata is read until the exact target package is verified. */
+    private AccessibilityNodeInfo readPlayerRoot(String pkg,int expectedWindow,ScanResult result) {
+        AccessibilityNodeInfo root=getRootInActiveWindow();
+        if(root!=null) {
+            if(pkg.equals(String.valueOf(root.getPackageName())))return root;
+            boolean ownBadge=getPackageName().equals(String.valueOf(root.getPackageName())) && "android.widget.TextView".contentEquals(String.valueOf(root.getClassName()));
+            root.recycle();
+            // Our display-only overlay can mask the active root on some OEMs.
+            // Never use this fallback for an unrelated foreground app.
+            if(!ownBadge){result.exited=true;return null;}
+        }
+        java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows=getWindows();
+        try {
+            for(android.view.accessibility.AccessibilityWindowInfo window:windows) {
+                if(window.getType()!=android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION || !(window.isActive() || window.isFocused()))continue;
+                if(expectedWindow>=0 && window.getId()!=expectedWindow)continue;
+                AccessibilityNodeInfo candidate=window.getRoot();
+                if(candidate==null)continue;
+                if(pkg.equals(String.valueOf(candidate.getPackageName())))return candidate;
+                candidate.recycle();
             }
+        } finally {for(android.view.accessibility.AccessibilityWindowInfo window:windows)window.recycle();}
+        return null;
+    }
+    private void applyScan(ScanResult result) {
+        if(result.index!=pagerIndex){schedule(180);return;}
+        if(!screenAvailable()){engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());suspend("Screen locked/off");return;}
+        Snapshot s=result.snapshot;Rect rootBounds=result.bounds;
+        boolean youtube=Detectors.youtube(ProbeStore.target);
+        boolean playerStructure=youtube?s.ytRecycler&&s.ytPage:s.feed&&s.like&&s.share;
             ProbeStore.scans++;
             if(s.cut) ProbeStore.truncated++;
             ProbeStore.tree=s.structure.toString();
-            Rect rootBounds=new Rect();
-            root.getBoundsInScreen(rootBounds);
+
             String snapshotInfo="at="+SystemClock.elapsedRealtime()+" bounds="+rootBounds.flattenToString()+" nodes="+s.nodes+" truncated="+s.cut+ " feed="+s.feed+" youtubeRecycler="+s.ytRecycler+" youtubePage="+s.ytPage+" like="+s.like+" share="+s.share+" contentFields="+s.fields+ " expandedHierarchy="+Detectors.youtube(ProbeStore.target);
             long area=(long)Math.max(0,rootBounds.width())*Math.max(0,rootBounds.height());
             long screenArea=(long)getResources().getDisplayMetrics().widthPixels*getResources().getDisplayMetrics().heightPixels;
@@ -353,9 +461,9 @@ public final class ProbeService extends AccessibilityService {
             ProbeStore.retainTree(s.structure.toString(),snapshotInfo,score,s.feed);
             ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", like="+s.like+", share="+s.share+", overlay="+s.overlay+ ", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
             boolean fullPlayer=FeedEvidence.fullPlayer(rootBounds.width(),rootBounds.height(),getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
-            boolean eligible=playerStructure && !s.overlay && !s.cut && s.fields>0 && fullPlayer;
+            boolean eligible=playerStructure && !s.overlay && !s.cut && FeedEvidence.identityAvailable(s.fields,Detectors.instagram(ProbeStore.target),pagerIndex) && fullPlayer;
             indicatorReady=playerStructure && !s.overlay && !s.profile && !s.cut && fullPlayer;
-            String hash=s.finish();
+            String hash=result.hash;
             ProbeStore.fingerprint=ProbeStore.enabled?hash:"";
             int before=ProbeStore.counter.accepted;
             ShortVideoDetector detector=Detectors.forPackage(ProbeStore.target);
@@ -407,19 +515,11 @@ public final class ProbeService extends AccessibilityService {
             if(!eligible) ProbeStore.status="Unconfirmed feed / overlay / unavailable content signal — no count";
             // Finite confirmation reads, not a permanent polling loop.
             if(eligible && verification++<2) schedule(TransitionProbe.STABLE_MS+50);
-        }
-        catch(RuntimeException e) {
-            ServiceHealth.failure("screen tree",e);
-            suspend("Tree unavailable — no count");
-        }
-        finally {
-            root.recycle();
-            long cost=SystemClock.elapsedRealtime()-lastScan;
-            ProbeStore.scanTimeMs+=cost;
-            ProbeStore.maxScanMs=Math.max(ProbeStore.maxScanMs,cost);
-            scanCooldown=Math.max(400,Math.min(1600,cost*2));
-            maintain(false);
-        }
+            else if(!s.overlay && !s.profile && s.feed && unavailableRetries++<3) {
+                if(!expandedRecovery){expandedRecovery=true;applyProfile();}
+                schedule(600);
+            }
+
     }
     private void queueYouTubeRead(long delay) {
         if(quickQueued || quickAttempts>=36) return;
@@ -442,34 +542,26 @@ public final class ProbeService extends AccessibilityService {
         KeyguardManager keyguard=(KeyguardManager)getSystemService(KEYGUARD_SERVICE);
         if(!power.isInteractive() || keyguard.isKeyguardLocked())return;
         quickAttempts++;
-        AccessibilityNodeInfo root=getRootInActiveWindow();
-        if(root==null) {
-            continueYouTubeRead();
-            return;
-        }
-        try {
-            if(!ProbeStore.target.contentEquals(String.valueOf(root.getPackageName())))return;
-            Rect bounds=new Rect();
-            root.getBoundsInScreen(bounds);
-            if(!FeedEvidence.fullPlayer(bounds.width(),bounds.height(),getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels))return;
-            Snapshot snapshot=new Snapshot(ProbeStore.target,getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
-            collectVisibleYouTubeFooter(root,snapshot);
-            ProbeStore.quickReads++;
-            if(snapshot.fields>0) {
-                String hash=snapshot.finish();
-                ProbeStore.fingerprint=ProbeStore.enabled?hash:"";
-                acceptYouTubeFingerprint(hash,now);
-            }
-            else youtubeFast.observe(null,now,false);
-        }
-        catch(RuntimeException ignored) {
-            ServiceHealth.failure("shorts label read",ignored);
-            /* An unavailable label is not a transition. */
-        }
-        finally {
-            root.recycle();
-        }
-        continueYouTubeRead();
+        final String pkg=ProbeStore.target;final long epoch=readEpoch;final int window=playerWindow;
+        Snapshot snapshot=new Snapshot(pkg,getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
+        submitRead("footer",epoch,()-> {
+            if(!currentRead(pkg,epoch))return;
+            ScanResult result=readSnapshot(snapshot,-1,window,true);
+            handler.post(()->guard("footer result",()-> {
+                if(!currentRead(pkg,epoch))return;
+                long at=SystemClock.elapsedRealtime();
+                if(result.exited){leaveFeed("Waiting for Reels or Shorts");return;}
+                if(!screenAvailable())return;
+                if(!FeedEvidence.valid(youtubeConfirmedAt,at) || !youtubeFast.active(at))return;
+                if(result.snapshot!=null && !result.snapshot.cut && at-result.at<=1500
+                        && FeedEvidence.fullPlayer(result.bounds.width(),result.bounds.height(),snapshot.screenWidth,snapshot.screenHeight)) {
+                    ProbeStore.quickReads++;
+                    if(result.snapshot.fields>0){ProbeStore.fingerprint=ProbeStore.enabled?result.hash:"";acceptYouTubeFingerprint(result.hash,at);}
+                    else youtubeFast.observe(null,at,false);
+                }
+                continueYouTubeRead();
+            }));
+        },()->{});
     }
     private void continueYouTubeRead() {
         long now=SystemClock.elapsedRealtime();
@@ -586,6 +678,7 @@ public final class ProbeService extends AccessibilityService {
         ProbeStore.fingerprint="";
     }
     @Override public void onInterrupt() {
+        invalidateReads();
         ServiceHealth.event("service interrupted");
         handler.removeCallbacks(scanTask);
         handler.removeCallbacks(quickTask);
@@ -593,6 +686,7 @@ public final class ProbeService extends AccessibilityService {
         guard("interrupt",()->suspend("Accessibility interrupted"));
     }
     @Override public void onDestroy() {
+        destroyed=true;invalidateReads();reader.close();
         ServiceHealth.event("service destroyed");
         handler.removeCallbacks(scanTask);
         handler.removeCallbacks(quickTask);
@@ -612,11 +706,14 @@ public final class ProbeService extends AccessibilityService {
         final StringBuilder structure=new StringBuilder();
         final Mac mac;
         final java.util.Set<String> youtubeLabels=new java.util.TreeSet<>();
-        int nodes,fields,captionFields;
+        int nodes,visitedNodes,fields,captionFields;
         final int maxNodes,maxDepth,screenWidth,screenHeight;
+        final boolean verbose;
+        long deadline;
         boolean feed,like,share,overlay,cut,ytRecycler,ytPage,profile,indexed;
         Snapshot(String pkg,int screenWidth,int screenHeight) {
             this.screenWidth=screenWidth; this.screenHeight=screenHeight;
+            verbose=ProbeStore.verbose;
             this.pkg=pkg;
             platform=Detectors.forPackage(pkg).platformName();
             ShortVideoDetector detector=Detectors.forPackage(pkg);
@@ -624,18 +721,17 @@ public final class ProbeService extends AccessibilityService {
             maxDepth=detector.maxDepth();
             try {
                 mac=Mac.getInstance("HmacSHA256");
-                mac.init(new SecretKeySpec(ProbeStore.salt,"HmacSHA256"));
+                mac.init(new SecretKeySpec(ProbeStore.salt.clone(),"HmacSHA256"));
             }
             catch(java.security.GeneralSecurityException e) {
                 throw new IllegalStateException(e);
             }
         }
         void walk(AccessibilityNodeInfo n,int depth) {
-            if(nodes>=maxNodes || depth>maxDepth) {
+            if(visitedNodes++>=maxNodes*4 || depth>maxDepth || SystemClock.elapsedRealtime()>deadline) {
                 cut=true;
                 return;
             }
-            nodes++;
             if(!n.isVisibleToUser()) {
                 for(int i=0;i<n.getChildCount() && nodes<maxNodes;i++) {
                     AccessibilityNodeInfo child=n.getChild(i);
@@ -644,6 +740,8 @@ public final class ProbeService extends AccessibilityService {
                 if(nodes>=maxNodes)cut=true;
                 return;
             }
+            if(nodes>=maxNodes){cut=true;return;}
+            nodes++;
             String id=n.getViewIdResourceName();
             id=id==null?"":id;
             String lowerId=id.toLowerCase(Locale.ROOT);
@@ -653,7 +751,7 @@ public final class ProbeService extends AccessibilityService {
                 overlay=true;
                 return;
             }
-            if(ProbeStore.verbose) {
+            if(verbose) {
                 Rect bounds=new Rect();
                 n.getBoundsInScreen(bounds);
                 for(int j=0;j<Math.min(depth,maxDepth);j++) structure.append(" ");
@@ -694,6 +792,7 @@ public final class ProbeService extends AccessibilityService {
             }
         }
         void collect(AccessibilityNodeInfo n,int depth,int[] visited,boolean inCaption) {
+            if(SystemClock.elapsedRealtime()>deadline){cut=true;return;}
             if(visited[0]++>=maxNodes || depth>maxDepth || !n.isVisibleToUser() || n.isPassword() || n.isEditable()) return;
             String id=n.getViewIdResourceName();
             id=id==null?"":id;
@@ -726,6 +825,7 @@ public final class ProbeService extends AccessibilityService {
             }
         }
         void findYouTubeFooter(AccessibilityNodeInfo n,int depth,int[] visited,boolean inFooter) {
+            if(SystemClock.elapsedRealtime()>deadline){cut=true;return;}
             if(visited[0]++>=maxNodes || depth>maxDepth || !n.isVisibleToUser() || n.isPassword() || n.isEditable()) return;
             String id=n.getViewIdResourceName();
             inFooter |= YouTubeSignals.footer(id);
@@ -736,7 +836,7 @@ public final class ProbeService extends AccessibilityService {
                     try {
                         Rect parent=new Rect();
                         group.getBoundsInScreen(parent);
-                        if(group.getChildCount()>=3) {
+                        if(group.getChildCount()>=2) {
                             for(int rowIndex=0;rowIndex<2;rowIndex++) {
                                 AccessibilityNodeInfo rowNode=group.getChild(rowIndex);
                                 if(rowNode==null) continue;

@@ -29,6 +29,9 @@ public final class FeedEvidenceTest {
         check(probe.accepted==28,"overlay excludes player event");
         probe.forgetFingerprints();probe.verifiedPosition(0,at+1000,true);
         check(probe.accepted==28,"reentry starts baseline without inventing transition");
+        check(FeedEvidence.identityAvailable(0,true,3),"validated index works without captions");
+        check(!FeedEvidence.identityAvailable(0,true,-1),"missing index and captions rejected");
+        check(!FeedEvidence.identityAvailable(0,false,3),"generic indices never prove identity");
         System.out.println("PASS: 19→47 partial-layout regression, duplicate/overlay/exit/truncation/expiry guards, reentry, PiP and split-screen geometry");
     }
 }

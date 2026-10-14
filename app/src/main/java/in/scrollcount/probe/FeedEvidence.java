@@ -9,6 +9,9 @@ public final class FeedEvidence {
     public static boolean valid(long at,long now) {
         return at>0 && now>=at && now-at<=TTL_MS;
     }
+    public static boolean identityAvailable(int contentFields,boolean indexedDetector,int index) {
+        return contentFields>0 || (indexedDetector && index>=0);
+    }
     public static boolean fullPlayer(int width,int height,int screenWidth,int screenHeight) {
         return screenWidth>0 && screenHeight>0 && (long)width*100>=screenWidth*85L && (long)height*100>=screenHeight*70L;
     }

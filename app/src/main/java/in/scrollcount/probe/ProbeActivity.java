@@ -485,7 +485,7 @@ public final class ProbeActivity extends Activity {
     private void footer() {
         ui.gap(body,10);
         body.addView(ui.text("Private counting. Optional sharing. Just awareness.",12,ui.muted,false));
-        body.addView(ui.text("ScrollCount 1.2.8",11,ui.muted,false));
+        body.addView(ui.text("ScrollCount 1.2.9",11,ui.muted,false));
         error=ui.text("",13,ui.dark?0xffffb6ac:0xffa13c30,false);
         body.addView(error);
     }

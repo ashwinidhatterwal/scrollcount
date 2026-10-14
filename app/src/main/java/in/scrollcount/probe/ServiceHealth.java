@@ -11,7 +11,7 @@ final class ServiceHealth {
     private static String exitReport="";
     static void attach(Context context) { app=context.getApplicationContext(); }
     static void event(String phase) { save(phase); }
-    static void failure(String phase,RuntimeException error) {
+    static synchronized void failure(String phase,RuntimeException error) {
         long now=android.os.SystemClock.elapsedRealtime();
         if(lastFailure>=0 && now-lastFailure<30000)return;
         lastFailure=now;
@@ -24,7 +24,7 @@ final class ServiceHealth {
         }
         save(phase+" · "+error.getClass().getSimpleName()+location);
     }
-    private static void save(String value) {
+    private static synchronized void save(String value) {
         if(app==null)return;
         try {
             SharedPreferences prefs=app.getSharedPreferences("service_health",0);
@@ -89,7 +89,7 @@ final class ServiceHealth {
             default:return "Reason "+reason;
         }
     }
-    static void clear(Context context) {
+    static synchronized void clear(Context context) {
         context.getSharedPreferences("service_health",0).edit().clear().apply();
         lastFailure=-1;
     }

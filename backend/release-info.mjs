@@ -2,7 +2,7 @@
 export const policy = {
   "operator": "Ashwini Dhatterwal",
   "supportEmail": "ashwinidhatterwal@gmail.com",
-  "effectiveDate": "2026-10-13",
+  "effectiveDate": "2026-10-14",
   "server": "https://scrollcount-friends.actionbridge.workers.dev",
   "appSigningCertificates": []
 };

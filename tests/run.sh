@@ -32,3 +32,5 @@ javac -cp "$probe_test_dir" -d "$probe_test_dir" app/src/main/java/in/scrollcoun
 java -cp "$probe_test_dir" in.scrollcount.probe.MultiAppTest
 javac -cp "$probe_test_dir" -d "$probe_test_dir" app/src/main/java/in/scrollcount/probe/CallbackGuard.java tests/CallbackGuardTest.java
 java -cp "$probe_test_dir" in.scrollcount.probe.CallbackGuardTest
+javac -cp "$probe_test_dir" -d "$probe_test_dir" app/src/main/java/in/scrollcount/probe/ReadLane.java tests/ReadLaneTest.java
+java -cp "$probe_test_dir" in.scrollcount.probe.ReadLaneTest

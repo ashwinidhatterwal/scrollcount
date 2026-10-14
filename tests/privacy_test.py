@@ -10,10 +10,12 @@ assert {p.get(a+'name') for p in manifest.findall('queries/package')}=={'com.ins
 service=ET.parse(root/'app/src/main/res/xml/probe_service.xml').getroot()
 assert service.get(a+'isAccessibilityTool')=='false'
 source=(root/'app/src/main/java/in/scrollcount/probe/ProbeService.java').read_text()
-assert source.index('if(detector==null)')<source.index('event.getSource()')
+assert source.index('if(detector==null)')<source.index('if(sampleSource)readSource')
 walk=source[source.index('void walk('):source.index('void collect(')]
 assert walk.index('n.isPassword()')<walk.index('n.getText()')
-assert 'if(ProbeStore.verbose)' in walk
+assert 'if(verbose)' in walk
+assert 'verbose=ProbeStore.verbose' in source
+assert 'copy.getSource()' in source
 store=(root/'app/src/main/java/in/scrollcount/probe/ProbeStore.java').read_text()
 assert 'verbose=on&&debug' in store
 history=(root/'app/src/main/java/in/scrollcount/probe/HistoryStore.java').read_text()

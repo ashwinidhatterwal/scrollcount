@@ -3,7 +3,7 @@ package in.scrollcount.probe;
 final class ReleaseInfo {
     static final String OPERATOR = "Ashwini Dhatterwal";
     static final String EMAIL = "ashwinidhatterwal@gmail.com";
-    static final String EFFECTIVE_DATE = "2026-10-13";
+    static final String EFFECTIVE_DATE = "2026-10-14";
     static String summary() {
         return "\n\nOperator: "+OPERATOR+"\nEffective date: "+EFFECTIVE_DATE
             +"\nPrivacy contact: "+(EMAIL.isEmpty()?"Not configured for publication":EMAIL)
