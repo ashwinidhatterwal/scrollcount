@@ -18,8 +18,9 @@ public final class InstagramSignals {
     public static boolean video(String id) {
         return localId(id).equals("clips_video_container");
     }
-    public static boolean playerStructure(boolean pager,boolean video,boolean feed,boolean like,boolean share) {
-        return pager && (video || (feed && like && share));
+    public static boolean playerStructure(boolean pager,boolean video,boolean fullVideo,boolean feed,boolean like,boolean share) {
+        // Preserve the observed 1.2.5 video-only layout without admitting inline previews.
+        return (pager && (video || (feed && like && share))) || (fullVideo && like && share);
     }
     public static boolean freshFrame(int capturedIndex,int currentIndex,long lastPositionAt,long now) {
         return capturedIndex==currentIndex || (currentIndex>=0 && lastPositionAt>0 && now>=lastPositionAt && now-lastPositionAt<=1500);

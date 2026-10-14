@@ -491,7 +491,7 @@ public final class ProbeService extends AccessibilityService {
                 snapshot.walk(root,0);
                 if(Detectors.youtube(snapshot.pkg))snapshot.feed|=YouTubeSignals.confirmedContainer(snapshot.ytRecycler,snapshot.ytPage);
                 boolean structure=Detectors.youtube(snapshot.pkg)?snapshot.ytRecycler&&snapshot.ytPage:
-                        Detectors.instagram(snapshot.pkg)?InstagramSignals.playerStructure(snapshot.igPager,snapshot.igVideo,snapshot.feed,snapshot.like,snapshot.share):snapshot.feed&&snapshot.like&&snapshot.share;
+                        Detectors.instagram(snapshot.pkg)?InstagramSignals.playerStructure(snapshot.igPager,snapshot.igVideo,snapshot.igFullVideo,snapshot.feed,snapshot.like,snapshot.share):snapshot.feed&&snapshot.like&&snapshot.share;
                 indexedStructure=Detectors.instagram(snapshot.pkg) && index>=0 && structure
                         && !snapshot.overlay && !snapshot.cut && SystemClock.elapsedRealtime()<=snapshot.deadline;
                 if(structure && !snapshot.overlay && !snapshot.cut) {
@@ -551,7 +551,7 @@ public final class ProbeService extends AccessibilityService {
         Snapshot s=result.snapshot;Rect rootBounds=result.bounds;
         boolean youtube=Detectors.youtube(ProbeStore.target);
         boolean playerStructure=youtube?s.ytRecycler&&s.ytPage:
-                instagramFrame?InstagramSignals.playerStructure(s.igPager,s.igVideo,s.feed,s.like,s.share):s.feed&&s.like&&s.share;
+                instagramFrame?InstagramSignals.playerStructure(s.igPager,s.igVideo,s.igFullVideo,s.feed,s.like,s.share):s.feed&&s.like&&s.share;
         ProbeStore.scans++;
         if(s.cut) ProbeStore.truncated++;
         ProbeStore.tree=s.structure.toString();
@@ -561,14 +561,14 @@ public final class ProbeService extends AccessibilityService {
         long screenArea=(long)getResources().getDisplayMetrics().widthPixels*getResources().getDisplayMetrics().heightPixels;
         long score=(screenArea>0 ? Math.min(1000000,area*1000000/screenArea) : 0)+s.nodes;
         ProbeStore.retainTree(s.structure.toString(),snapshotInfo,score,s.feed);
-        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+ ", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
+        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", instagramFullVideo="+s.igFullVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+ ", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
         boolean fullPlayer=FeedEvidence.fullPlayer(rootBounds.width(),rootBounds.height(),getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
         if(instagramFrame && instagramPendingAt>=0) {
             long now=SystemClock.elapsedRealtime();
             boolean expired=now-instagramPendingAt>FastFingerprintTracker.MOVEMENT_TTL_MS;
             if(expired || s.overlay || s.profile || (!s.cut && !s.feed)) {
                 instagramPendingAt=-1;instagramPendingWindow=-1;
-            } else if(playerStructure && s.igPager && s.igVideo && !s.cut && fullPlayer && s.fields>0
+            } else if(playerStructure && (s.igFullVideo || (s.igPager && s.igVideo)) && !s.cut && fullPlayer && s.fields>0
                     && result.window==instagramPendingWindow && result.at>=instagramPendingAt) {
                 position=pagerIndex=-1;lastPagerAt=0;
                 scrollUntil=instagramPendingAt+2500;
@@ -589,7 +589,7 @@ public final class ProbeService extends AccessibilityService {
         long observationTime=SystemClock.elapsedRealtime();
         if(instagram) {
             instagramConfirmedAt=FeedEvidence.update(instagramConfirmedAt,observationTime,eligible,s.feed,s.overlay||s.profile,!s.cut,fullPlayer);
-            if(eligible && s.igPager && s.igVideo)instagramPlayerWindow=result.window;
+            if(eligible)instagramPlayerWindow=result.window;
         }
         else if(youtube) {
             // Container confirmation and label availability are separate. A loading title must
@@ -877,7 +877,7 @@ public final class ProbeService extends AccessibilityService {
         final int maxNodes,maxDepth,screenWidth,screenHeight;
         final boolean verbose;
         long deadline;
-        boolean feed,like,share,overlay,cut,ytRecycler,ytPage,profile,igPager,igVideo;
+        boolean feed,like,share,overlay,cut,ytRecycler,ytPage,profile,igPager,igVideo,igFullVideo;
         Snapshot(String pkg,int screenWidth,int screenHeight) {
             this.screenWidth=screenWidth; this.screenHeight=screenHeight;
             verbose=ProbeStore.verbose;
@@ -917,7 +917,7 @@ public final class ProbeService extends AccessibilityService {
                     Rect bounds=new Rect();n.getBoundsInScreen(bounds);
                     if(visiblePlayerBounds(bounds)) {
                         boolean pager=InstagramSignals.pager(marker),video=InstagramSignals.video(marker);
-                        igPager|=pager;igVideo|=video;feed|=pager||video;
+                        igPager|=pager;igVideo|=video;igFullVideo|=video;feed|=pager||video;
                     }
                 }
                 return;
@@ -943,6 +943,7 @@ public final class ProbeService extends AccessibilityService {
             feed |= (Detectors.instagram(pkg) ? InstagramSignals.player(id) : Detectors.youtube(pkg) ? lowerId.contains("shorts") : socialPlayer) || ((Detectors.instagram(pkg) || Detectors.youtube(pkg)) && (n.isSelected() || !n.isClickable()) && (text.equals("reels") || text.equals("shorts") || text.equals("spotlight") || desc.equals("reels") || desc.equals("spotlight")));
             igPager |= Detectors.instagram(pkg) && InstagramSignals.pager(id) && visiblePlayerBounds(nodeBounds);
             igVideo |= Detectors.instagram(pkg) && InstagramSignals.video(id);
+            igFullVideo |= Detectors.instagram(pkg) && InstagramSignals.video(id) && visiblePlayerBounds(nodeBounds);
             ytRecycler |= Detectors.youtube(pkg) && YouTubeSignals.recycler(id);
             ytPage |= Detectors.youtube(pkg) && YouTubeSignals.page(id);
             like |= controls.contains("like") || controls.contains("पसंद") || controls.contains("favorite") || controls.contains("favourite");

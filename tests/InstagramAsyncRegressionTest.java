@@ -10,7 +10,7 @@ public final class InstagramAsyncRegressionTest {
             int captured=i-1,current=i;long event=10000+i*1800,now=event+400;
             if(captured!=current)rejectedByOldGate++;
             check(InstagramSignals.freshFrame(captured,current,event,now),"fresh exact event belongs to confirmed player even when capture index advanced");
-            check(InstagramSignals.playerStructure(true,true,true,false,false),"two exact player markers do not require labeled icons");
+            check(InstagramSignals.playerStructure(true,true,false,true,false,false),"two exact player markers do not require labeled icons");
             check(FeedEvidence.identityAvailable(0,true,current),"position identity needs no captions");
             counter.verifiedPosition(current,event,true);
             engine.observe("Instagram","pager:"+current,counter.committedAt(),now,now+100000);
@@ -19,8 +19,8 @@ public final class InstagramAsyncRegressionTest {
         check(rejectedByOldGate==20,"old captured-index gate would discard every one of these frames");
         check(counter.accepted==19&&sink.durations.size()==20,"twenty confirmed exposures retained");
         check(!InstagramSignals.freshFrame(2,3,1000,4000),"old mismatched positions still rejected");
-        check(!InstagramSignals.playerStructure(false,true,true,false,false),"video preview alone does not prove a viewer");
-        check(!InstagramSignals.playerStructure(true,false,false,false,false),"incomplete player markers do not prove a viewer");
+        check(!InstagramSignals.playerStructure(false,true,false,true,false,false),"video preview alone does not prove a viewer");
+        check(!InstagramSignals.playerStructure(true,false,false,false,false,false),"incomplete player markers do not prove a viewer");
         check(InstagramSignals.pagerScroll("com.instagram.android:id/clips_viewer_view_pager","androidx.recyclerview.widget.RecyclerView",5,5),"known pager ID is independent of wrapper class");
         check(!InstagramSignals.pagerScroll("com.instagram.android:id/swipeable_tab_view_pager","androidx.recyclerview.widget.RecyclerView",5,5),"navigation rejected");
         check(!InstagramSignals.pagerScroll("com.instagram.android:id/clips_viewer_view_pager","android.view.ViewGroup",5,6),"ambiguous indices rejected");

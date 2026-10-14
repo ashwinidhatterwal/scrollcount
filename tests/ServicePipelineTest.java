@@ -302,13 +302,62 @@ public final class ServicePipelineTest {
         scan(s,((InstagramIdentity)get(s,"instagramIdentity")).scanIndex((Integer)get(s,"pagerIndex")),"reel-B",true,true,31200);
         check(sink.detected==2,"new exact position supersedes pending missing-source recovery without duplicating its exposure");
     }
+    static Object legacyPlayer(String caption,boolean clippedPager,boolean preview)throws Exception {
+        Object video=node("com.instagram.android:id/clips_video_container","",true);
+        video.getClass().getField("right").setInt(video,1080);
+        if(preview)video.getClass().getField("bottom").setInt(video,700);
+        Object root=node("","",true,video,
+            node("com.instagram.android:id/like_button","Like",true),
+            node("com.instagram.android:id/share_button","Share",true),
+            node("com.instagram.android:id/clips_author_username","same-author",true),
+            node("com.instagram.android:id/clips_caption_component",caption,true));
+        root.getClass().getField("right").setInt(root,1080);
+        if(clippedPager) {
+            root.getClass().getField("id").set(root,"com.instagram.android:id/clips_viewer_view_pager");
+            root.getClass().getField("bottom").setInt(root,1600); // accessibility wrapper bounds omit system/navigation space
+            Object window=node("","",true,root);window.getClass().getField("right").setInt(window,1080);root=window;
+        }
+        return root;
+    }
+    static void legacyLayoutPipeline()throws Exception {
+        for(int variant=0;variant<3;variant++) {
+            Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+            set(s,"reader",new ReadLane((java.util.concurrent.Executor)Runnable::run));set(s,"queued",false);set(s,"generation",ProbeStore.generation);
+            for(int i=0;i<20;i++) {
+                long now=10000+i*3000;time(now);
+                Object tree=legacyPlayer("legacy-reel-"+i,variant==1,false);
+                Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,tree);
+                Object source=node("com.instagram.android:id/clips_viewer_view_pager","",true);
+                source.getClass().getField("type").set(source,"androidx.viewpager.widget.ViewPager");
+                if(variant==2 && i>0)source=null;
+                s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(i,4096,source));pump(s,now+2200);
+            }
+            check(sink.detected==20,"LEGACY_LAYOUT_REJECTED variant="+variant+" expected 20, got "+sink.detected);
+            check(sink.ends==0,"legacy player observations cannot falsely close the session");
+        }
+    }
+    static void legacyPreviewExcluded()throws Exception {
+        Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+        set(s,"reader",new ReadLane((java.util.concurrent.Executor)Runnable::run));set(s,"queued",false);set(s,"generation",ProbeStore.generation);
+        Object tree=legacyPlayer("inline video",false,true);
+        Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,tree);
+        Object source=node("com.instagram.android:id/clips_viewer_view_pager","",true);
+        source.getClass().getField("type").set(source,"androidx.viewpager.widget.ViewPager");
+        s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(0,4096,source));pump(s,12200);
+        check(sink.detected==0,"inline video with like/share is not a full-screen Reel");
+        time(15000);tree=legacyPlayer("comment overlay",false,false);
+        tree.getClass().getField("id").set(tree,"com.instagram.android:id/comments_panel");
+        Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,tree);
+        s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(1,4096,source));pump(s,17200);
+        check(sink.detected==0,"comments overlay cannot use legacy full-video fallback");
+    }
     public static void main(String[] args)throws Exception {
         snapshot=Class.forName("in.scrollcount.probe.ProbeService$Snapshot");result=Class.forName("in.scrollcount.probe.ProbeService$ScanResult");
         int failures=0;
-        for(String name:new String[]{"missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded"})try {
+        for(String name:new String[]{"missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded"})try {
             Method test=ServicePipelineTest.class.getDeclaredMethod(name);test.invoke(null);
         }catch(InvocationTargetException e){failures++;System.err.println(name+": "+e.getCause());e.getCause().printStackTrace();}
         check(failures==0,"service pipeline regressions: "+failures);
-        System.out.println("PASS: 15 service cases, six real event-pipeline traces plus late indices (140 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
+        System.out.println("PASS: 17 service cases, six modern traces, late indices and three legacy-layout traces (200 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
     }
 }
