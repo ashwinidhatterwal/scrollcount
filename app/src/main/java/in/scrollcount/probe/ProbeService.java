@@ -120,13 +120,14 @@ public final class ProbeService extends AccessibilityService {
     }
     private final Handler handler = new Handler(android.os.Looper.getMainLooper());
     private final ReadLane reader=new ReadLane((java.util.function.Consumer<RuntimeException>)error->handler.post(()->guard("background reader",()->{throw error;})));
+    private final ReadLane sourceReader=new ReadLane((java.util.function.Consumer<RuntimeException>)error->handler.post(()->guard("source reader",()->{throw error;})));
     private volatile long readEpoch;
     private volatile boolean destroyed;
     private int playerWindow=-1;
     private long sourceSequence;
     private final java.util.Set<Runnable> readTimers=new java.util.HashSet<>();
     private void invalidateReads() {
-        readEpoch++;reader.cancelPending();
+        readEpoch++;reader.cancelPending();sourceReader.cancelPending();
         instagramPendingAt=-1;instagramPendingWindow=-1;
         for(Runnable timeout:readTimers)handler.removeCallbacks(timeout);
         readTimers.clear();
@@ -135,7 +136,10 @@ public final class ProbeService extends AccessibilityService {
         return !destroyed && trackingAllowed() && epoch==readEpoch && pkg.equals(ProbeStore.target);
     }
     private void submitRead(String key,long epoch,Runnable read,Runnable release) {
-        reader.submit(key,()-> {
+        submitRead(reader,key,epoch,read,release);
+    }
+    private void submitRead(ReadLane lane,String key,long epoch,Runnable read,Runnable release) {
+        lane.submit(key,()-> {
             if(destroyed || epoch!=readEpoch)return;
             final Runnable timeout=()-> {
                 if(destroyed || epoch!=readEpoch)return;
@@ -309,7 +313,7 @@ public final class ProbeService extends AccessibilityService {
         final String eventClass=String.valueOf(event.getClassName());
         final AccessibilityEvent copy=AccessibilityEvent.obtain(event);
         String key=scroll?"scroll:"+(sourceSequence++):"source";
-        submitRead(key,epoch,()-> {
+        submitRead(sourceReader,key,epoch,()-> {
             if(!currentRead(pkg,epoch))return;
             String id="",type=eventClass;
             boolean descendant=false;
@@ -456,7 +460,7 @@ public final class ProbeService extends AccessibilityService {
             ScanResult result=readSnapshot(snapshot,index,window,false);
             handler.post(()->guard("scan result",()-> {
                 if(!currentRead(pkg,epoch))return;
-                ProbeStore.readerDropped=reader.dropped();
+                ProbeStore.readerDropped=reader.dropped()+sourceReader.dropped();
                 ProbeStore.scanTimeMs+=result.cost;
                 ProbeStore.maxScanMs=Math.max(ProbeStore.maxScanMs,result.cost);
                 scanCooldown=Math.max(400,Math.min(1600,result.cost*2));
@@ -561,7 +565,7 @@ public final class ProbeService extends AccessibilityService {
         long screenArea=(long)getResources().getDisplayMetrics().widthPixels*getResources().getDisplayMetrics().heightPixels;
         long score=(screenArea>0 ? Math.min(1000000,area*1000000/screenArea) : 0)+s.nodes;
         ProbeStore.retainTree(s.structure.toString(),snapshotInfo,score,s.feed);
-        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", instagramFullVideo="+s.igFullVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+", overlayReasons="+s.overlayReasons+ ", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
+        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", instagramFullVideo="+s.igFullVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+", overlayReasons="+s.overlayReasons+", sheetCandidates="+s.sheetCandidates+ ", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
         boolean fullPlayer=FeedEvidence.fullPlayer(rootBounds.width(),rootBounds.height(),getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
         if(instagramFrame && instagramPendingAt>=0) {
             long now=SystemClock.elapsedRealtime();
@@ -601,7 +605,7 @@ public final class ProbeService extends AccessibilityService {
             if(FeedEvidence.valid(youtubeConfirmedAt,observationTime) && youtubeFast.active(observationTime))
                 queueYouTubeRead(20);
         }
-        if(!eligible) ProbeStore.decision(observationTime+" SCAN_NOT_CONFIRMED playerStructure="+playerStructure+" instagramPager="+s.igPager+" instagramVideo="+s.igVideo+" instagramFullVideo="+s.igFullVideo+" feed="+s.feed+" overlay="+s.overlay+" overlayReasons="+s.overlayReasons+" truncated="+s.cut+" fullPlayer="+fullPlayer+" like="+s.like+" share="+s.share+" youtubeRecycler="+s.ytRecycler+" youtubePage="+s.ytPage+" fields="+s.fields);
+        if(!eligible) ProbeStore.decision(observationTime+" SCAN_NOT_CONFIRMED playerStructure="+playerStructure+" instagramPager="+s.igPager+" instagramVideo="+s.igVideo+" instagramFullVideo="+s.igFullVideo+" feed="+s.feed+" overlay="+s.overlay+" overlayReasons="+s.overlayReasons+" sheetCandidates="+s.sheetCandidates+" truncated="+s.cut+" fullPlayer="+fullPlayer+" like="+s.like+" share="+s.share+" youtubeRecycler="+s.ytRecycler+" youtubePage="+s.ytPage+" fields="+s.fields);
         if(instagram && eligible && position>=0) {
             instagramConfirmedAt=observationTime;
             boolean unchangedPosition=ProbeStore.counter.isCommitted(identity);
@@ -853,7 +857,7 @@ public final class ProbeService extends AccessibilityService {
         guard("interrupt",()->suspend("Accessibility interrupted"));
     }
     @Override public void onDestroy() {
-        destroyed=true;invalidateReads();reader.close();
+        destroyed=true;invalidateReads();reader.close();sourceReader.close();
         ServiceHealth.event("service destroyed");
         handler.removeCallbacks(scanTask);
         handler.removeCallbacks(quickTask);
@@ -874,7 +878,7 @@ public final class ProbeService extends AccessibilityService {
         final Mac mac;
         final java.util.Set<String> youtubeLabels=new java.util.TreeSet<>();
         int nodes,visitedNodes,fields,captionFields,playerMarkers;
-        String overlayReasons="";
+        String overlayReasons="",sheetCandidates="";
         final int maxNodes,maxDepth,screenWidth,screenHeight;
         final boolean verbose;
         long deadline;
@@ -934,7 +938,7 @@ public final class ProbeService extends AccessibilityService {
             boolean opener=instagram && (lowerId.endsWith("_button") || lowerId.endsWith("_icon")
                     || lowerId.endsWith("_button_container") || type.endsWith("Button") || type.endsWith("ImageView"));
             boolean genericSheet=lowerId.contains("bottom_sheet") && !opener;
-            int markersBefore=playerMarkers;
+            int markersBefore=playerMarkers,ownNodeCount=nodes;
             if(verbose) {
                 Rect bounds=new Rect();
                 n.getBoundsInScreen(bounds);
@@ -982,14 +986,26 @@ public final class ProbeService extends AccessibilityService {
                     }
                 }
             }
-            // Reels itself can be hosted by a bottom-sheet wrapper. Only a sheet
-            // without its own verified player subtree is a blocking generic panel.
-            if(instagram && genericSheet && playerMarkers==markersBefore)blockOverlay("sheet_without_player");
+            // Generic sheet hosts also occur as empty placeholders and small sibling
+            // controls. A name alone cannot establish that a modal panel is open.
+            if(instagram && genericSheet) {
+                int visibleChildren=nodes-ownNodeCount;
+                boolean panel=playerMarkers==markersBefore && visibleChildren>0 && panelBounds(nodeBounds);
+                if(panel)blockOverlay("visible_sheet_panel");
+                if(ProbeStore.enabled && sheetCandidates.length()<500)
+                    sheetCandidates+=(sheetCandidates.isEmpty()?"":";")+InstagramSignals.localId(id)
+                            +":"+nodeBounds.flattenToString()+" children="+visibleChildren+" panel="+panel;
+            }
         }
         private void blockOverlay(String reason) {
             overlay=true;
             if(!overlayReasons.contains(reason) && overlayReasons.length()<160)
                 overlayReasons+=(overlayReasons.isEmpty()?"":",")+reason;
+        }
+        private boolean panelBounds(Rect bounds) {
+            int width=Math.max(0,Math.min(screenWidth,bounds.right)-Math.max(0,bounds.left));
+            int height=Math.max(0,Math.min(screenHeight,bounds.bottom)-Math.max(0,bounds.top));
+            return (long)width*100>=screenWidth*85L && (long)height*100>=screenHeight*30L;
         }
         private boolean visiblePlayerBounds(Rect bounds) {
             int width=Math.max(0,Math.min(screenWidth,bounds.right)-Math.max(0,bounds.left));

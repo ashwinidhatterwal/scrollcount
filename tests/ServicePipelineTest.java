@@ -7,6 +7,7 @@ public final class ServicePipelineTest {
     static void check(boolean ok,String message){if(!ok)throw new AssertionError(message);}
     static void set(Object object,String name,Object value)throws Exception {
         Field field=object.getClass().getDeclaredField(name);field.setAccessible(true);field.set(object,value);
+        if(name.equals("reader"))try {Field source=object.getClass().getDeclaredField("sourceReader");source.setAccessible(true);source.set(object,value);}catch(NoSuchFieldException ignored){}
     }
     static Object get(Object object,String name)throws Exception {
         Field field=object.getClass().getDeclaredField(name);field.setAccessible(true);return field.get(object);
@@ -390,8 +391,13 @@ public final class ServicePipelineTest {
             Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
             set(s,"reader",new ReadLane((java.util.concurrent.Executor)Runnable::run));set(s,"queued",false);set(s,"generation",ProbeStore.generation);
             Object tree=(kind==0 || kind==5)?overlayLayout("typed comment",0,kind==0):node("","",true,player("background reel",false),
-                node("com.instagram.android:id/"+new String[]{"unused","comments_panel","share_sheet","bottom_sheet","story_viewer"}[kind],"",true));
+                node("com.instagram.android:id/"+new String[]{"unused","comments_panel","share_sheet","bottom_sheet","story_viewer"}[kind],"",true,node("","Visible panel content",true)));
             tree.getClass().getField("right").setInt(tree,1080);
+            if(kind==3) {
+                Object[] children=(Object[])tree.getClass().getField("children").get(tree);
+                children[1].getClass().getField("right").setInt(children[1],1080);
+                children[1].getClass().getField("top").setInt(children[1],1200);
+            }
             if(kind==5) {
                 Object[] children=(Object[])tree.getClass().getField("children").get(tree);
                 children[1].getClass().getField("password").setBoolean(children[1],true);
@@ -401,13 +407,44 @@ public final class ServicePipelineTest {
             check(sink.detected==0,"actual blocking overlay cannot count background Reels, kind="+kind);
         }
     }
+    static void siblingSheetPipeline()throws Exception {
+        for(int variant=0;variant<2;variant++) {
+            Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+            set(s,"reader",new ReadLane((java.util.concurrent.Executor)Runnable::run));set(s,"queued",false);set(s,"generation",ProbeStore.generation);
+            for(int i=0;i<20;i++) {
+                long now=10000+i*3000;time(now);
+                Object sheet=variant==0?node("com.instagram.android:id/reels_controls_bottom_sheet","",true,node("","Share",true)):
+                    node("com.instagram.android:id/bottom_sheet","",true);
+                sheet.getClass().getField("type").set(sheet,"android.widget.FrameLayout");
+                sheet.getClass().getField("right").setInt(sheet,1080);
+                if(variant==0)sheet.getClass().getField("top").setInt(sheet,2200);
+                Object tree=node("","",true,player("reel-"+i,false),sheet);tree.getClass().getField("right").setInt(tree,1080);
+                Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,tree);
+                s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(i,4096,player("",false)));pump(s,now+2200);
+            }
+            check(sink.detected==20,"SIBLING_SHEET_FALSE_OVERLAY variant="+variant+" expected 20, observed "+sink.detected);
+        }
+    }
+    static void sourceBehindSlowTree()throws Exception {
+        Sink sink=new Sink();ProbeService s=service(InstagramSignals.PACKAGE,sink);
+        java.util.ArrayList<Runnable> heldTrees=new java.util.ArrayList<>();
+        set(s,"reader",new ReadLane((java.util.concurrent.Executor)heldTrees::add));
+        try {set(s,"sourceReader",new ReadLane((java.util.concurrent.Executor)Runnable::run));}catch(NoSuchFieldException ignored){}
+        set(s,"queued",false);set(s,"generation",ProbeStore.generation);set(s,"instagramConfirmedAt",9900L);
+        for(int i=0;i<40;i++) {
+            long now=10000+i*100;time(now);
+            s.onAccessibilityEvent((android.view.accessibility.AccessibilityEvent)event(5+i,4096,player("",false)));pump(s,now+50);
+        }
+        check(!heldTrees.isEmpty(),"structural reader is deliberately held busy");
+        check((Integer)get(s,"pagerIndex")==44 && sink.detected==40,"TREE_QUEUE_STARVES_PAGER: 40 rapid confirmed indexed events must count while a tree read is blocked; detected="+sink.detected);
+    }
     public static void main(String[] args)throws Exception {
         snapshot=Class.forName("in.scrollcount.probe.ProbeService$Snapshot");result=Class.forName("in.scrollcount.probe.ProbeService$ScanResult");
         int failures=0;
-        for(String name:new String[]{"missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels"})try {
+        for(String name:new String[]{"missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels","siblingSheetPipeline","sourceBehindSlowTree"})try {
             Method test=ServicePipelineTest.class.getDeclaredMethod(name);test.invoke(null);
         }catch(InvocationTargetException e){failures++;System.err.println(name+": "+e.getCause());e.getCause().printStackTrace();}
         check(failures==0,"service pipeline regressions: "+failures);
-        System.out.println("PASS: 19 service cases, modern/legacy layouts and three overlay-affordance traces (260 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
+        System.out.println("PASS: 21 service cases, modern/legacy/overlay/sibling-sheet layouts and 40 rapid indexed events during a blocked tree read (340 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
     }
 }
