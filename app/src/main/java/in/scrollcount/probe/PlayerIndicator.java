@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.PixelFormat;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.View;
 import android.view.WindowManager;
@@ -16,7 +17,7 @@ final class PlayerIndicator {
     private final WindowManager windows;
     private TextView badge;
     private int windowId=-1;
-    private boolean unavailable;
+    private long retryAt;
     private String label="";
 
     PlayerIndicator(Context context) {
@@ -25,7 +26,7 @@ final class PlayerIndicator {
     }
 
     void show(long items) {
-        if(unavailable)return;
+        if(retryAt>0 && SystemClock.elapsedRealtime()<retryAt)return;
         String next="●  Scrolls · "+(items>=0?Ui.number(items):"—");
         try {
             if(badge==null) {
@@ -62,7 +63,9 @@ final class PlayerIndicator {
             }
         } catch(RuntimeException ignored) {
             hide();
-            unavailable=true; // Do not repeatedly attempt a rejected window on every event.
+            // Back off instead of giving up: a rejected window (display change, OEM overlay
+            // restriction, transient token failure) is retried after 20 seconds.
+            retryAt=SystemClock.elapsedRealtime()+20000;
         }
     }
 

@@ -518,18 +518,23 @@ public final class ProbeService extends AccessibilityService {
     /** Only package/window metadata is read until the exact target package is verified. */
     private AccessibilityNodeInfo readPlayerRoot(String pkg,int expectedWindow,ScanResult result) {
         AccessibilityNodeInfo root=getRootInActiveWindow();
+        boolean otherForeground=false;
         if(root!=null) {
             if(pkg.equals(String.valueOf(root.getPackageName())))return root;
             boolean ownBadge=getPackageName().equals(String.valueOf(root.getPackageName())) && "android.widget.TextView".contentEquals(String.valueOf(root.getClassName()));
             root.recycle();
             // Our display-only overlay can mask the active root on some OEMs.
-            // Never use this fallback for an unrelated foreground app.
-            if(!ownBadge){result.exited=true;return null;}
+            if(!ownBadge)otherForeground=true;
         }
         java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows=getWindows();
         try {
             for(android.view.accessibility.AccessibilityWindowInfo window:windows) {
-                if(window.getType()!=android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION || !(window.isActive() || window.isFocused()))continue;
+                if(window.getType()!=android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION)continue;
+                // Normally require the active/focused window. When another package owns the active
+                // root (floating sidebar, assistant, chat bubble), accept the target's own visible
+                // application window instead of treating the overlay as leaving the feed. Geometry
+                // checks later reject small, split-screen and floating windows.
+                if(!otherForeground && !(window.isActive() || window.isFocused()))continue;
                 if(expectedWindow>=0 && window.getId()!=expectedWindow)continue;
                 AccessibilityNodeInfo candidate=window.getRoot();
                 if(candidate==null)continue;
@@ -537,6 +542,8 @@ public final class ProbeService extends AccessibilityService {
                 candidate.recycle();
             }
         } finally {for(android.view.accessibility.AccessibilityWindowInfo window:windows)window.recycle();}
+        // Another app really is in front and the target has no visible window: left the feed.
+        if(otherForeground)result.exited=true;
         return null;
     }
     private void applyScan(ScanResult result) {
