@@ -27,7 +27,7 @@ doubles = {
  }''',
  'android/view/accessibility/AccessibilityNodeInfo.java': '''package android.view.accessibility;
  public class AccessibilityNodeInfo {
- public String id="",label="",type="android.widget.TextView",pkg="com.instagram.android"; public boolean visible=true,editable,password,focused;
+ public String id="",label="",type="android.widget.TextView",pkg="com.instagram.android"; public boolean visible=true,editable,password,focused,scrollable;
  public long labelDelay;
  public AccessibilityNodeInfo[] children=new AccessibilityNodeInfo[0];
  public AccessibilityNodeInfo parent;
@@ -38,7 +38,7 @@ doubles = {
  public boolean isVisibleToUser(){return visible;} public boolean isFocused(){return focused;} public boolean isEditable(){return editable;}
  public boolean isPassword(){return password;} public CharSequence getClassName(){return type;}
  public CharSequence getPackageName(){return pkg;}
- public boolean isSelected(){return false;} public boolean isClickable(){return false;}
+ public boolean isScrollable(){return scrollable;} public boolean isSelected(){return false;} public boolean isClickable(){return false;}
  public String getViewIdResourceName(){return id;} public CharSequence getText(){reads++;android.os.SystemClock.now+=labelDelay;return label;}
  public CharSequence getContentDescription(){return null;} public int getChildCount(){return children.length;}
  public AccessibilityNodeInfo getChild(int i){return children[i];} public void recycle(){}

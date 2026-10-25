@@ -659,19 +659,7 @@ public final class ProbeActivity extends Activity {
         return new SimpleDateFormat(pattern,Locale.getDefault()).format(new Date(at));
     }
     private void readVersions() {
-        StringBuilder versions=new StringBuilder();
-        for(String p:new String[] {
-            getPackageName(),InstagramSignals.PACKAGE,YouTubeSignals.PACKAGE,"com.instagram.lite","com.facebook.katana","com.facebook.lite","com.snapchat.android"
-        }) {
-            try {
-                android.content.pm.PackageInfo i=getPackageManager().getPackageInfo(p,0);
-                versions.append(p).append(' ').append(i.versionName).append(" ("+(Build.VERSION.SDK_INT>=28?i.getLongVersionCode():i.versionCode)+")\n");
-            }
-            catch(android.content.pm.PackageManager.NameNotFoundException e) {
-                versions.append(p).append(" not installed\n");
-            }
-        }
-        ProbeStore.appVersions=versions.toString();
+        ProbeStore.refreshVersions(this);
         ProbeStore.setDiagnostics(prefs.getBoolean("diagnostics",true),(getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0);
     }
     @Override protected void onSaveInstanceState(Bundle state) {

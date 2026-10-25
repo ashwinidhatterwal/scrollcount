@@ -493,13 +493,77 @@ public final class ServicePipelineTest {
         call(s,"invalidateReads",new Class<?>[]{});
         check((Integer)get(s,"facebookIndex")==-1,"Facebook window/read reset clears position");
     }
+    static Object snapchatTree(String label,boolean spotlight,boolean favorite,boolean panel)throws Exception {
+        Object title=node("com.snapchat.android:id/0_resource_name_obfuscated",spotlight?"Spotlight":"Stories",true);
+        set(title,"bottom",140);
+        Object author=node("com.snapchat.android:id/0_resource_name_obfuscated",label,true);
+        set(author,"right",650);set(author,"top",1600);set(author,"bottom",1700);
+        Object count=node("com.snapchat.android:id/0_resource_name_obfuscated","123K",true);
+        set(count,"right",650);set(count,"top",1720);set(count,"bottom",1770);
+        Object action=node("com.snapchat.android:id/0_resource_name_obfuscated",favorite?"Favorite":"Share",true);
+        set(action,"type","android.widget.Button");set(action,"left",900);set(action,"right",1040);set(action,"top",1000);set(action,"bottom",1140);
+        Object player=node("com.snapchat.android:id/0_resource_name_obfuscated","",true,author,count,action);
+        set(player,"type","androidx.recyclerview.widget.RecyclerView");set(player,"right",1080);
+        Object root=node("","",true,title,player);
+        set(root,"right",1080);set(root,"pkg","com.snapchat.android");
+        if(panel){Object input=node("","",true);set(input,"editable",true);set(root,"children",new android.view.accessibility.AccessibilityNodeInfo[]{(android.view.accessibility.AccessibilityNodeInfo)title,(android.view.accessibility.AccessibilityNodeInfo)player,(android.view.accessibility.AccessibilityNodeInfo)input});}
+        return root;
+    }
+    static Object snapchatFrame(ProbeService service,String label,boolean spotlight,boolean favorite,boolean panel,long now)throws Exception {
+        time(now);Constructor<?> ctor=snapshot.getDeclaredConstructor(String.class,int.class,int.class);ctor.setAccessible(true);
+        Object snap=ctor.newInstance("com.snapchat.android",1080,2400);
+        Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,snapchatTree(label,spotlight,favorite,panel));
+        return call(service,"readSnapshot",new Class<?>[]{snapshot,int.class,int.class,boolean.class},snap,-1,11,false);
+    }
+    static void snapchatSource(ProbeService service,long now)throws Exception {
+        time(now);call(service,"applySource",new Class<?>[]{String.class,String.class,String.class,int.class,int.class,int.class,int.class,boolean.class,long.class},
+                "com.snapchat.android","","android.widget.FrameLayout",-1,-1,4096,0,true,now);
+    }
+    static void snapchatPipeline()throws Exception {
+        Sink sink=new Sink();ProbeService s=service("com.snapchat.android",sink);ProbeStore.setDiagnostics(true,false);
+        snapchatSource(s,10000);
+        Object stories=snapchatFrame(s,"Private story caption",false,true,false,10100);
+        check(!(Boolean)get(get(stories,"snapshot"),"snapchatConfirmed"),"Snapchat Stories are not Spotlight");
+        check((Integer)get(get(stories,"snapshot"),"fields")==0,"unconfirmed Snapchat captions are never collected");
+        android.view.accessibility.AccessibilityNodeInfo storyRoot=(android.view.accessibility.AccessibilityNodeInfo)Class.forName("android.accessibilityservice.AccessibilityService").getField("root").get(null);
+        check((Integer)get(storyRoot.getChild(1).getChild(0),"reads")==0,"unconfirmed Snapchat body text is not read during layout detection");
+        Object first=snapchatFrame(s,"Creator Alpha",true,true,false,10200);
+        check((Boolean)get(get(first,"snapshot"),"snapchatConfirmed"),"obfuscated Spotlight proof accepted without a share label");
+        check((Integer)get(get(first,"snapshot"),"fields")==1,"only scoped text, not numeric counters, becomes identity");
+        call(s,"applyScan",new Class<?>[]{result},first);
+        call(s,"applyScan",new Class<?>[]{result},snapchatFrame(s,"Creator Alpha",true,true,false,11000));
+        check(sink.detected==1,"Snapchat initial baseline establishes one exposure");
+        snapchatSource(s,12000);
+        call(s,"applyScan",new Class<?>[]{result},snapchatFrame(s,"Creator Beta",true,true,false,12100));
+        call(s,"applyScan",new Class<?>[]{result},snapchatFrame(s,"Creator Beta",true,true,false,13000));
+        check(sink.detected==2&&ProbeStore.counter.accepted==1,"unindexed FrameLayout scroll and stable scoped content count once");
+        call(s,"applyScan",new Class<?>[]{result},snapchatFrame(s,"Creator Beta edited",true,true,false,14000));
+        call(s,"applyScan",new Class<?>[]{result},snapchatFrame(s,"Creator Beta edited",true,true,false,15000));
+        check(sink.detected==2,"a consumed movement cannot count subsequent label edits");
+        snapchatSource(s,16000);
+        Object blocked=snapchatFrame(s,"Creator Gamma",true,true,true,16100);
+        check((Integer)get(get(blocked,"snapshot"),"fields")==0,"editable overlay excludes Snapchat content collection");
+        call(s,"applyScan",new Class<?>[]{result},blocked);
+        Object noFavorite=snapchatFrame(s,"Creator Gamma",true,false,false,17000);
+        check(!(Boolean)get(get(noFavorite,"snapshot"),"snapchatConfirmed"),"Spotlight tab alone cannot confirm a player");
+        Object stale=snapchatFrame(s,"Creator Gamma",true,true,false,22000);
+        call(s,"applyScan",new Class<?>[]{result},stale);
+        call(s,"applyScan",new Class<?>[]{result},snapchatFrame(s,"Creator Gamma",true,true,false,23000));
+        check(sink.detected==2,"expired Snapchat movement cannot count");
+        call(s,"invalidateReads",new Class<?>[]{});
+        check((Long)get(s,"snapchatMovementAt")==0,"window/read reset clears Snapchat movement");
+        Object info=get(get(first,"snapshot"),"snapchatLayout");
+        check(info.toString().contains("depth=")&&!info.toString().contains("Creator")&&!info.toString().contains("123K"),"release metadata contains structure but no captions/authors/count labels");
+        String report=ProbeStore.report();check(report.contains("Snapchat layout metadata")&&!report.contains("Creator"),"release export includes content-free metadata");
+        ProbeStore.setDiagnostics(false,false);check(ProbeStore.snapchatLayout.isEmpty(),"disabling diagnostics clears Snapchat metadata");
+    }
     public static void main(String[] args)throws Exception {
         snapshot=Class.forName("in.scrollcount.probe.ProbeService$Snapshot");result=Class.forName("in.scrollcount.probe.ProbeService$ScanResult");
         int failures=0;
-        for(String name:new String[]{"facebookPipeline","missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels","siblingSheetPipeline","sourceBehindSlowTree"})try {
+        for(String name:new String[]{"snapchatPipeline","facebookPipeline","missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels","siblingSheetPipeline","sourceBehindSlowTree"})try {
             Method test=ServicePipelineTest.class.getDeclaredMethod(name);test.invoke(null);
         }catch(InvocationTargetException e){failures++;System.err.println(name+": "+e.getCause());e.getCause().printStackTrace();}
         check(failures==0,"service pipeline regressions: "+failures);
-        System.out.println("PASS: 22 service cases including redacted-ID Facebook snapshot/source/counting guards, modern/legacy/overlay/sibling-sheet layouts and 40 rapid indexed events during a blocked tree read (340 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
+        System.out.println("PASS: 23 service cases with unindexed Snapchat Spotlight and content-free metadata including redacted-ID Facebook snapshot/source/counting guards, modern/legacy/overlay/sibling-sheet layouts and 40 rapid indexed events during a blocked tree read (340 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
     }
 }

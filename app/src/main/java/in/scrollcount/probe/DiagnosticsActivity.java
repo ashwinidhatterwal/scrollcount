@@ -39,7 +39,7 @@ public final class DiagnosticsActivity extends Activity {
         body.addView(back);
         TextView note=new TextView(this);
         note.setTextColor(ui.muted);
-        note.setText("Local diagnostics are on by default; you can turn them off in Settings. Service-health events remain locally after restart; label diagnostics stay in memory; release builds never retain tree dumps. Diagnostics are temporary and sanitized. Video changes here differ from 'videos seen': the home screen and Scrolls badge count all confirmed items, including quick skips; Seen applies a 2-second threshold.");
+        note.setText("Local diagnostics are on by default; you can turn them off in Settings. Service-health events remain locally after restart; label diagnostics stay in memory; release exports can include content-free Snapchat layout metadata; detailed UI dumps remain debug-only. Diagnostics are temporary and sanitized. Video changes here differ from 'videos seen': the home screen and Scrolls badge count all confirmed items, including quick skips; Seen applies a 2-second threshold.");
         body.addView(note);
         body.addView(ui.button("Save diagnostic file",true,()-> {
             Intent save=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("text/plain")
@@ -92,6 +92,7 @@ public final class DiagnosticsActivity extends Activity {
     }
     @Override public void onResume() {
         super.onResume();
+        ProbeStore.refreshVersions(this);
         handler.post(refresh);
     }
     @Override public void onPause() {

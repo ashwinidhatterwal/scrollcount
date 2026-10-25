@@ -26,7 +26,9 @@ assert 'indicator.show(indicatorInstagram+indicatorYouTube)' in service
 badge = (root/'app/src/main/java/in/scrollcount/probe/PlayerIndicator.java').read_text()
 assert 'Scrolls' in badge and 'platform.equals' not in badge
 activity=(root/'app/src/main/java/in/scrollcount/probe/ProbeActivity.java').read_text()
-assert 'Build.VERSION.SDK_INT>=28?i.getLongVersionCode():i.versionCode' in activity
+inventory=(root/'app/src/main/java/in/scrollcount/probe/ProbeStore.java').read_text()
+assert 'Build.VERSION.SDK_INT>=28?info.getLongVersionCode():info.versionCode' in inventory
+assert 'ProbeStore.refreshVersions(this)' in activity
 assert 'minSdk = 26' in (root/'app/build.gradle.kts').read_text()
 assert 'dependsOn(checkReleasePolicy)' in (root/'app/build.gradle.kts').read_text()
 print('PASS: synchronized public metadata, email/certificate rejection, API-28 heading guards, combined badge and signed-release gate')

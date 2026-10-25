@@ -127,6 +127,7 @@ public final class ProbeService extends AccessibilityService {
     private String facebookSource="";
     private int facebookIndex=-1,facebookWindow=-1;
     private long facebookAt;
+    private long snapchatMovementAt;private int snapchatMovementWindow=-1;
     private void resetFacebook() {
         facebookSource="";facebookIndex=facebookWindow=-1;facebookAt=0;
     }
@@ -134,7 +135,7 @@ public final class ProbeService extends AccessibilityService {
     private final java.util.Set<Runnable> readTimers=new java.util.HashSet<>();
     private void invalidateReads() {
         readEpoch++;reader.cancelPending();sourceReader.cancelPending();
-        resetFacebook();
+        resetFacebook();snapchatMovementAt=0;snapchatMovementWindow=-1;
         instagramPendingAt=-1;instagramPendingWindow=-1;
         for(Runnable timeout:readTimers)handler.removeCallbacks(timeout);
         readTimers.clear();
@@ -404,6 +405,10 @@ public final class ProbeService extends AccessibilityService {
             schedule(180);
             ProbeStore.decision(now+" INSTAGRAM_CONTENT_RECOVERY reason=missing_pager_source");
         }
+        if(scroll && detector.platformName().equals("Snapchat") && SnapchatSignals.movement(type)) {
+            snapchatMovementAt=arrivedAt;snapchatMovementWindow=eventWindow;
+            schedule(180); // Missing resource IDs/indices are not a reason to discard class/window metadata.
+        }
         if(scroll && detector.platformName().equals("Facebook")) {
             int index=FacebookSignals.position(type,from,to);
             // The source alone never authorizes counting. A fresh matching full-player
@@ -515,13 +520,16 @@ public final class ProbeService extends AccessibilityService {
             else {
                 snapshot.walk(root,0);
                 if(Detectors.youtube(snapshot.pkg))snapshot.feed|=YouTubeSignals.confirmedContainer(snapshot.ytRecycler,snapshot.ytPage);
-                snapshot.feed|=snapshot.facebookPlayer;
+                snapshot.snapchatConfirmed=snapshot.platform.equals("Snapchat") && snapshot.snapchatSpotlight
+                        && snapshot.snapchatPager && snapshot.snapchatFavorite && snapshot.snapchatPlayerWithFavorite && !snapshot.overlay;
+                snapshot.feed|=snapshot.facebookPlayer||snapshot.snapchatConfirmed;
                 boolean structure=Detectors.youtube(snapshot.pkg)?snapshot.ytRecycler&&snapshot.ytPage:
-                        Detectors.instagram(snapshot.pkg)?InstagramSignals.playerStructure(snapshot.igPager,snapshot.igVideo,snapshot.igFullVideo,snapshot.feed,snapshot.like,snapshot.share):snapshot.feed&&snapshot.like&&snapshot.share;
+                        Detectors.instagram(snapshot.pkg)?InstagramSignals.playerStructure(snapshot.igPager,snapshot.igVideo,snapshot.igFullVideo,snapshot.feed,snapshot.like,snapshot.share):snapshot.platform.equals("Snapchat")?snapshot.snapchatConfirmed:snapshot.feed&&snapshot.like&&snapshot.share;
                 indexedStructure=Detectors.instagram(snapshot.pkg) && index>=0 && structure
                         && !snapshot.overlay && !snapshot.cut && SystemClock.elapsedRealtime()<=snapshot.deadline;
                 if(structure && !snapshot.overlay && !snapshot.cut) {
                     if(Detectors.youtube(snapshot.pkg))collectVisibleYouTubeFooter(root,snapshot);
+                    else if(snapshot.platform.equals("Snapchat"))snapshot.collectSnapchat(root,0,new int[]{0},false);
                     else if(!snapshot.platform.equals("Facebook"))snapshot.collect(root,0,new int[]{0},false);
                 }
             }
@@ -592,7 +600,9 @@ public final class ProbeService extends AccessibilityService {
                 && (SystemClock.elapsedRealtime()-s.facebookAt<=5000 || ProbeStore.counter.isCommitted(facebookIdentity));
         boolean youtube=Detectors.youtube(ProbeStore.target);
         boolean playerStructure=youtube?s.ytRecycler&&s.ytPage:
-                instagramFrame?InstagramSignals.playerStructure(s.igPager,s.igVideo,s.igFullVideo,s.feed,s.like,s.share):s.feed&&s.like&&s.share;
+                instagramFrame?InstagramSignals.playerStructure(s.igPager,s.igVideo,s.igFullVideo,s.feed,s.like,s.share):s.platform.equals("Snapchat")?s.snapchatConfirmed:s.feed&&s.like&&s.share;
+        if(ProbeStore.enabled && s.platform.equals("Snapchat") && s.snapchatLayout.length()>0)
+            ProbeStore.retainSnapchat(s.snapchatLayout.toString(),s.nodes+(s.snapchatConfirmed?10000:0));
         ProbeStore.scans++;
         if(s.cut) ProbeStore.truncated++;
         ProbeStore.tree=s.structure.toString();
@@ -602,7 +612,7 @@ public final class ProbeService extends AccessibilityService {
         long screenArea=(long)getResources().getDisplayMetrics().widthPixels*getResources().getDisplayMetrics().heightPixels;
         long score=(screenArea>0 ? Math.min(1000000,area*1000000/screenArea) : 0)+s.nodes;
         ProbeStore.retainTree(s.structure.toString(),snapshotInfo,score,s.feed);
-        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", instagramFullVideo="+s.igFullVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+", overlayReasons="+s.overlayReasons+", sheetCandidates="+s.sheetCandidates+ ", facebookPlayer="+s.facebookPlayer+", facebookIndex="+s.facebookIndex+", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
+        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", instagramFullVideo="+s.igFullVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+", overlayReasons="+s.overlayReasons+", sheetCandidates="+s.sheetCandidates+ ", snapchatSpotlight="+s.snapchatSpotlight+", snapchatPager="+s.snapchatPager+", snapchatFavorite="+s.snapchatFavorite+", snapchatConfirmed="+s.snapchatConfirmed+", facebookPlayer="+s.facebookPlayer+", facebookIndex="+s.facebookIndex+", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
         boolean fullPlayer=FeedEvidence.fullPlayer(rootBounds.width(),rootBounds.height(),getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
         if(instagramFrame && instagramPendingAt>=0) {
             long now=SystemClock.elapsedRealtime();
@@ -628,6 +638,8 @@ public final class ProbeService extends AccessibilityService {
         String identity=facebook ? facebookIdentity : instagram && position>=0 ? "pager:"+position : hash;
         boolean movement=instagram && position>=0 ? (position!=acceptedPagerIndex && SystemClock.elapsedRealtime()<=scrollUntil) : SystemClock.elapsedRealtime()<=scrollUntil;
         long observationTime=SystemClock.elapsedRealtime();
+        if(s.platform.equals("Snapchat"))movement=snapchatMovementAt>0 && observationTime>=snapchatMovementAt
+                && observationTime-snapchatMovementAt<=4000 && result.at>=snapchatMovementAt && snapchatMovementWindow==result.window;
         if(instagram) {
             instagramConfirmedAt=FeedEvidence.update(instagramConfirmedAt,observationTime,eligible,s.feed,s.overlay||s.profile,!s.cut,fullPlayer);
             if(eligible)instagramPlayerWindow=result.window;
@@ -682,6 +694,7 @@ public final class ProbeService extends AccessibilityService {
             if(youtube && ProbeStore.counter.isCommitted(identity)) youtubeFast.seed(identity);
         }
         if(ProbeStore.counter.accepted!=before || ProbeStore.status.startsWith("Baseline acquired")) acceptedPagerIndex=pagerIndex;
+        if(s.platform.equals("Snapchat") && (ProbeStore.counter.accepted!=before||ProbeStore.status.startsWith("Baseline acquired")))snapchatMovementAt=0;
         if(ProbeStore.counter.accepted!=before) ProbeStore.transition(SystemClock.elapsedRealtime()+" ACCEPTED_TRANSITION #"+ProbeStore.counter.accepted);
         if(eligible && ProbeStore.counter.isCommitted(identity)) {
             if(instagram) {
@@ -920,6 +933,9 @@ public final class ProbeService extends AccessibilityService {
         int facebookIndex=-1,facebookWindow=-1;
         long facebookAt;
         boolean facebookPlayer;
+        boolean snapchatSpotlight,snapchatPager,snapchatFavorite,snapchatConfirmed,snapchatPlayerWithFavorite;
+        final java.util.List<Rect> snapchatFavorites=new java.util.ArrayList<>();
+        final StringBuilder snapchatLayout=new StringBuilder();
         final java.util.List<Rect> facebookLikes=new java.util.ArrayList<>(),facebookShares=new java.util.ArrayList<>();
         final int maxNodes,maxDepth,screenWidth,screenHeight;
         final boolean verbose;
@@ -987,13 +1003,42 @@ public final class ProbeService extends AccessibilityService {
                 for(int j=0;j<Math.min(depth,maxDepth);j++) structure.append(" ");
                 structure.append(type).append(" id=").append(id) .append(" bounds=").append(bounds.flattenToString()).append(" children=").append(n.getChildCount()) .append(" selected=").append(n.isSelected()).append(" clickable=").append(n.isClickable()) .append(" text=").append(n.getText()==null?"none":"[redacted]") .append(" description=").append(n.getContentDescription()==null?"none":"[redacted]").append('\n');
             }
+            boolean snapchat=platform.equals("Snapchat");
+            int snapchatFavoritesBefore=snapchatFavorites.size();
             int facebookLikesBefore=facebookLikes.size(),facebookSharesBefore=facebookShares.size();
             boolean control=type.endsWith("Button") || type.endsWith("ImageView") || n.isSelected() || n.isClickable();
-            String text=control?String.valueOf(n.getText()).toLowerCase(Locale.ROOT):"";
-            String desc=control?String.valueOf(n.getContentDescription()).toLowerCase(Locale.ROOT):"";
+            Rect nodeBounds=new Rect();n.getBoundsInScreen(nodeBounds);
+            boolean snapchatUi=snapchat && ((nodeBounds.top>=0&&nodeBounds.bottom<=screenHeight/5)
+                    || (n.isSelected()&&nodeBounds.top>=screenHeight*4L/5)
+                    || ((type.endsWith("Button")||type.endsWith("ImageView")||(n.isClickable()&&!type.endsWith("TextView")))
+                        &&FacebookSignals.railControl(nodeBounds.left,nodeBounds.top,nodeBounds.right,nodeBounds.bottom,screenWidth,screenHeight)));
+            boolean readControl=snapchat?snapchatUi:control;
+            CharSequence rawText=readControl?n.getText():null,rawDesc=readControl?n.getContentDescription():null;
+            String text=control?String.valueOf(rawText).toLowerCase(Locale.ROOT):"";
+            String desc=control?String.valueOf(rawDesc).toLowerCase(Locale.ROOT):"";
             String controls=lowerId+" "+text+" "+desc;
-            Rect nodeBounds=new Rect();
-            n.getBoundsInScreen(nodeBounds);
+            if(snapchat){
+                // Read only to recognise fixed UI vocabulary; never export these labels.
+                String st=String.valueOf(rawText),sd=String.valueOf(rawDesc);
+                snapchatSpotlight|=SnapchatSignals.spotlight(st,n.isSelected(),n.isClickable(),nodeBounds.top,screenHeight)
+                        || SnapchatSignals.spotlight(sd,n.isSelected(),n.isClickable(),nodeBounds.top,screenHeight)
+                        || (SocialSignals.player(id,platform)&&visiblePlayerBounds(nodeBounds));
+                boolean pager=(FacebookSignals.recycler(type)||InstagramSignals.pagerClass(type)||n.isScrollable())&&visiblePlayerBounds(nodeBounds);
+                snapchatPager|=pager;
+                if(FacebookSignals.recycler(type)&&!pager&&nodeBounds.width()>=screenWidth*85L/100
+                        &&nodeBounds.height()>=screenHeight*30L/100)blockOverlay("snapchat_list_panel");
+                boolean favorite=(SnapchatSignals.favorite(st)||SnapchatSignals.favorite(sd))
+                        && FacebookSignals.railControl(nodeBounds.left,nodeBounds.top,nodeBounds.right,nodeBounds.bottom,screenWidth,screenHeight);
+                snapchatFavorite|=favorite;if(favorite)snapchatFavorites.add(new Rect(nodeBounds));
+                if(ProbeStore.enabled && snapchatLayout.length()<24000){
+                    snapchatLayout.append("depth=").append(depth).append(" type=").append(type).append(" bounds=").append(nodeBounds.flattenToString())
+                            .append(" selected=").append(n.isSelected()).append(" clickable=").append(n.isClickable()).append(" scrollable=").append(n.isScrollable())
+                            .append(" children=").append(n.getChildCount()).append(" textPresent=").append(rawText!=null)
+                            .append(" descriptionPresent=").append(rawDesc!=null).append(" spotlight=")
+                            .append(SnapchatSignals.label(st).equals("spotlight")||SnapchatSignals.label(sd).equals("spotlight"))
+                            .append(" favorite=").append(favorite).append(" pager=").append(pager).append('\n');
+                }
+            }
             boolean socialPlayer=SocialSignals.player(id,platform) && FeedEvidence.fullPlayer(nodeBounds.width(),nodeBounds.height(),screenWidth,screenHeight);
             feed |= (Detectors.instagram(pkg) ? InstagramSignals.player(id) : Detectors.youtube(pkg) ? lowerId.contains("shorts") : socialPlayer) || ((Detectors.instagram(pkg) || Detectors.youtube(pkg)) && (n.isSelected() || !n.isClickable()) && (text.equals("reels") || text.equals("shorts") || text.equals("spotlight") || desc.equals("reels") || desc.equals("spotlight")));
             igPager |= Detectors.instagram(pkg) && InstagramSignals.pager(id) && visiblePlayerBounds(nodeBounds);
@@ -1033,6 +1078,10 @@ public final class ProbeService extends AccessibilityService {
                     }
                 }
             }
+            if(snapchat && (FacebookSignals.recycler(type)||InstagramSignals.pagerClass(type)||n.isScrollable()) && visiblePlayerBounds(nodeBounds)) {
+                snapchatPager=true;
+                snapchatPlayerWithFavorite|=snapchatFavorites.size()>snapchatFavoritesBefore;
+            }
             if(platform.equals("Facebook") && !facebookSource.isEmpty() && facebookSource.equals(id)
                     && FacebookSignals.recycler(type) && visiblePlayerBounds(nodeBounds)) {
                 for(int a=facebookLikesBefore;a<facebookLikes.size();a++) {
@@ -1068,6 +1117,22 @@ public final class ProbeService extends AccessibilityService {
             int width=Math.max(0,Math.min(screenWidth,bounds.right)-Math.max(0,bounds.left));
             int height=Math.max(0,Math.min(screenHeight,bounds.bottom)-Math.max(0,bounds.top));
             return FeedEvidence.fullPlayer(width,height,screenWidth,screenHeight);
+        }
+        void collectSnapchat(AccessibilityNodeInfo n,int depth,int[] visited,boolean inPlayer){
+            if(SystemClock.elapsedRealtime()>deadline||visited[0]++>=maxNodes||depth>maxDepth){cut=true;return;}
+            String type=String.valueOf(n.getClassName());
+            if(n.isPassword()||n.isEditable()||type.contains("EditText"))return;
+            Rect bounds=new Rect();n.getBoundsInScreen(bounds);
+            inPlayer|=(FacebookSignals.recycler(type)||InstagramSignals.pagerClass(type)||n.isScrollable())&&visiblePlayerBounds(bounds);
+            if(inPlayer && n.isVisibleToUser() && n.getChildCount()==0 && type.endsWith("TextView")
+                    && SnapchatSignals.footer(bounds.left,bounds.top,bounds.right,bounds.bottom,screenWidth,screenHeight)){
+                String value=n.getText()==null?"":n.getText().toString().trim();
+                if(SnapchatSignals.content(value)){socialLabels.add(value);fields++;captionFields++;}
+            }
+            for(int i=0;i<n.getChildCount();i++){
+                AccessibilityNodeInfo child=n.getChild(i);if(child!=null)try{collectSnapchat(child,depth+1,visited,inPlayer);}finally{child.recycle();}
+                if(cut)break;
+            }
         }
         void collect(AccessibilityNodeInfo n,int depth,int[] visited,boolean inCaption) {
             if(SystemClock.elapsedRealtime()>deadline){cut=true;return;}
