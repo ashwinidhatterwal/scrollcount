@@ -28,8 +28,9 @@ javac -cp "$probe_test_dir" -d "$probe_test_dir" app/src/main/java/in/scrollcoun
 java -cp "$probe_test_dir" in.scrollcount.probe.FriendCipherTest
 javac -cp "$probe_test_dir" -d "$probe_test_dir" app/src/main/java/in/scrollcount/probe/FriendInvitation.java tests/FriendInvitationTest.java
 java -cp "$probe_test_dir" in.scrollcount.probe.FriendInvitationTest
-javac -cp "$probe_test_dir" -d "$probe_test_dir" app/src/main/java/in/scrollcount/probe/ShortVideoDetector.java app/src/main/java/in/scrollcount/probe/InstagramDetector.java app/src/main/java/in/scrollcount/probe/YouTubeDetector.java app/src/main/java/in/scrollcount/probe/SocialSignals.java app/src/main/java/in/scrollcount/probe/SocialDetector.java app/src/main/java/in/scrollcount/probe/Detectors.java tests/MultiAppTest.java
+javac -cp "$probe_test_dir" -d "$probe_test_dir" app/src/main/java/in/scrollcount/probe/ShortVideoDetector.java app/src/main/java/in/scrollcount/probe/InstagramDetector.java app/src/main/java/in/scrollcount/probe/YouTubeDetector.java app/src/main/java/in/scrollcount/probe/FacebookSignals.java tests/FacebookSignalsTest.java app/src/main/java/in/scrollcount/probe/SocialSignals.java app/src/main/java/in/scrollcount/probe/SocialDetector.java app/src/main/java/in/scrollcount/probe/Detectors.java tests/MultiAppTest.java
 java -cp "$probe_test_dir" in.scrollcount.probe.MultiAppTest
+java -cp "$probe_test_dir" in.scrollcount.probe.FacebookSignalsTest
 javac -cp "$probe_test_dir" -d "$probe_test_dir" app/src/main/java/in/scrollcount/probe/CallbackGuard.java tests/CallbackGuardTest.java
 java -cp "$probe_test_dir" in.scrollcount.probe.CallbackGuardTest
 javac -cp "$probe_test_dir" -d "$probe_test_dir" app/src/main/java/in/scrollcount/probe/ReadLane.java tests/ReadLaneTest.java

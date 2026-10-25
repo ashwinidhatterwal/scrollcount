@@ -33,8 +33,8 @@ doubles = {
  public AccessibilityNodeInfo parent;
  public AccessibilityNodeInfo getParent(){return parent;}
  public int getWindowId(){return 11;}
- public int right=800,top=0,bottom=2400,reads;
- public void getBoundsInScreen(android.graphics.Rect r){r.set(0,top,right,bottom);}
+ public int left=0,right=800,top=0,bottom=2400,reads;
+ public void getBoundsInScreen(android.graphics.Rect r){r.set(left,top,right,bottom);}
  public boolean isVisibleToUser(){return visible;} public boolean isFocused(){return focused;} public boolean isEditable(){return editable;}
  public boolean isPassword(){return password;} public CharSequence getClassName(){return type;}
  public CharSequence getPackageName(){return pkg;}
@@ -74,6 +74,8 @@ doubles = {
  }''',
  'android/graphics/Rect.java': '''package android.graphics; public class Rect {
  public int left,top,right,bottom; public Rect(){} public Rect(int l,int t,int r,int b){set(l,t,r,b);}
+ public Rect(Rect r){set(r.left,r.top,r.right,r.bottom);}
+ public int centerX(){return (left+right)/2;} public int centerY(){return (top+bottom)/2;}
  public void set(int l,int t,int r,int b){left=l;top=t;right=r;bottom=b;}
  public int width(){return right-left;} public int height(){return bottom-top;}
  public String flattenToString(){return left+" "+top+" "+right+" "+bottom;}

@@ -124,10 +124,17 @@ public final class ProbeService extends AccessibilityService {
     private volatile long readEpoch;
     private volatile boolean destroyed;
     private int playerWindow=-1;
+    private String facebookSource="";
+    private int facebookIndex=-1,facebookWindow=-1;
+    private long facebookAt;
+    private void resetFacebook() {
+        facebookSource="";facebookIndex=facebookWindow=-1;facebookAt=0;
+    }
     private long sourceSequence;
     private final java.util.Set<Runnable> readTimers=new java.util.HashSet<>();
     private void invalidateReads() {
         readEpoch++;reader.cancelPending();sourceReader.cancelPending();
+        resetFacebook();
         instagramPendingAt=-1;instagramPendingWindow=-1;
         for(Runnable timeout:readTimers)handler.removeCallbacks(timeout);
         readTimers.clear();
@@ -329,6 +336,11 @@ public final class ProbeService extends AccessibilityService {
                         if(!parentPager.isEmpty()){id=parentPager;descendant=true;}
                     }
                     if(id.isEmpty())type=eventClass;
+                    if(scroll && Detectors.forPackage(pkg).platformName().equals("Facebook")) {
+                        Rect sourceBounds=new Rect();node.getBoundsInScreen(sourceBounds);
+                        if(!FeedEvidence.fullPlayer(sourceBounds.width(),sourceBounds.height(),
+                                getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels))type="facebook_partial_source";
+                    }
                 }
             } catch(RuntimeException error){ServiceHealth.failure("event source",error);}
             finally {if(node!=null)node.recycle();}
@@ -391,6 +403,13 @@ public final class ProbeService extends AccessibilityService {
             }
             schedule(180);
             ProbeStore.decision(now+" INSTAGRAM_CONTENT_RECOVERY reason=missing_pager_source");
+        }
+        if(scroll && detector.platformName().equals("Facebook")) {
+            int index=FacebookSignals.position(type,from,to);
+            // The source alone never authorizes counting. A fresh matching full-player
+            // snapshot with a vertical action rail must confirm this exact window/source.
+            facebookSource=id;facebookIndex=index;facebookWindow=eventWindow;facebookAt=arrivedAt;
+            if(index>=0 && !id.isEmpty()) { scrollUntil=arrivedAt+5000;schedule(180); }
         }
         if(scroll && !detector.usesPosition() && detector.movement(id,type,from,to)) {
             scrollUntil=arrivedAt+5000;
@@ -455,6 +474,8 @@ public final class ProbeService extends AccessibilityService {
         final String pkg=ProbeStore.target;final long epoch=readEpoch;
         final int index=Detectors.instagram(pkg)?instagramIdentity.scanIndex(pagerIndex):pagerIndex,window=playerWindow;
         final Snapshot snapshot=new Snapshot(pkg,getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
+        snapshot.facebookSource=facebookSource;snapshot.facebookIndex=facebookIndex;
+        snapshot.facebookAt=facebookAt;snapshot.facebookWindow=facebookWindow;
         submitRead("scan",epoch,()-> {
             if(!currentRead(pkg,epoch))return;
             ScanResult result=readSnapshot(snapshot,index,window,false);
@@ -494,13 +515,14 @@ public final class ProbeService extends AccessibilityService {
             else {
                 snapshot.walk(root,0);
                 if(Detectors.youtube(snapshot.pkg))snapshot.feed|=YouTubeSignals.confirmedContainer(snapshot.ytRecycler,snapshot.ytPage);
+                snapshot.feed|=snapshot.facebookPlayer;
                 boolean structure=Detectors.youtube(snapshot.pkg)?snapshot.ytRecycler&&snapshot.ytPage:
                         Detectors.instagram(snapshot.pkg)?InstagramSignals.playerStructure(snapshot.igPager,snapshot.igVideo,snapshot.igFullVideo,snapshot.feed,snapshot.like,snapshot.share):snapshot.feed&&snapshot.like&&snapshot.share;
                 indexedStructure=Detectors.instagram(snapshot.pkg) && index>=0 && structure
                         && !snapshot.overlay && !snapshot.cut && SystemClock.elapsedRealtime()<=snapshot.deadline;
                 if(structure && !snapshot.overlay && !snapshot.cut) {
                     if(Detectors.youtube(snapshot.pkg))collectVisibleYouTubeFooter(root,snapshot);
-                    else snapshot.collect(root,0,new int[]{0},false);
+                    else if(!snapshot.platform.equals("Facebook"))snapshot.collect(root,0,new int[]{0},false);
                 }
             }
             if(SystemClock.elapsedRealtime()>snapshot.deadline)snapshot.cut=true;
@@ -560,6 +582,14 @@ public final class ProbeService extends AccessibilityService {
         }
         if(!screenAvailable()){engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());suspend("Screen locked/off");return;}
         Snapshot s=result.snapshot;Rect rootBounds=result.bounds;
+        boolean facebook=s.platform.equals("Facebook");
+        if(facebook && (s.facebookAt!=facebookAt || s.facebookIndex!=facebookIndex)) {
+            schedule(180);return;
+        }
+        String facebookIdentity="facebook:"+s.facebookSource+":"+s.facebookIndex;
+        boolean facebookPosition=facebook && s.facebookPlayer && s.facebookIndex>=0
+                && s.facebookWindow==result.window && s.facebookAt>0
+                && (SystemClock.elapsedRealtime()-s.facebookAt<=5000 || ProbeStore.counter.isCommitted(facebookIdentity));
         boolean youtube=Detectors.youtube(ProbeStore.target);
         boolean playerStructure=youtube?s.ytRecycler&&s.ytPage:
                 instagramFrame?InstagramSignals.playerStructure(s.igPager,s.igVideo,s.igFullVideo,s.feed,s.like,s.share):s.feed&&s.like&&s.share;
@@ -572,7 +602,7 @@ public final class ProbeService extends AccessibilityService {
         long screenArea=(long)getResources().getDisplayMetrics().widthPixels*getResources().getDisplayMetrics().heightPixels;
         long score=(screenArea>0 ? Math.min(1000000,area*1000000/screenArea) : 0)+s.nodes;
         ProbeStore.retainTree(s.structure.toString(),snapshotInfo,score,s.feed);
-        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", instagramFullVideo="+s.igFullVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+", overlayReasons="+s.overlayReasons+", sheetCandidates="+s.sheetCandidates+ ", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
+        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", instagramFullVideo="+s.igFullVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+", overlayReasons="+s.overlayReasons+", sheetCandidates="+s.sheetCandidates+ ", facebookPlayer="+s.facebookPlayer+", facebookIndex="+s.facebookIndex+", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
         boolean fullPlayer=FeedEvidence.fullPlayer(rootBounds.width(),rootBounds.height(),getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
         if(instagramFrame && instagramPendingAt>=0) {
             long now=SystemClock.elapsedRealtime();
@@ -587,7 +617,7 @@ public final class ProbeService extends AccessibilityService {
                 instagramPendingAt=-1;instagramPendingWindow=-1;
             }
         }
-        boolean eligible=playerStructure && !s.overlay && !s.cut && FeedEvidence.identityAvailable(s.fields,Detectors.instagram(ProbeStore.target),position) && fullPlayer;
+        boolean eligible=playerStructure && !s.overlay && !s.profile && !s.cut && (facebook ? facebookPosition : FeedEvidence.identityAvailable(s.fields,Detectors.instagram(ProbeStore.target),position)) && fullPlayer;
         indicatorReady=playerStructure && !s.overlay && !s.profile && !s.cut && fullPlayer;
         String hash=result.hash;
         ProbeStore.fingerprint=ProbeStore.enabled?hash:"";
@@ -595,7 +625,7 @@ public final class ProbeService extends AccessibilityService {
         ShortVideoDetector detector=Detectors.forPackage(ProbeStore.target);
         boolean instagram=detector.usesPosition();
         // Exact player-pager position distinguishes identical captions and cannot change on a like.
-        String identity=instagram && position>=0 ? "pager:"+position : hash;
+        String identity=facebook ? facebookIdentity : instagram && position>=0 ? "pager:"+position : hash;
         boolean movement=instagram && position>=0 ? (position!=acceptedPagerIndex && SystemClock.elapsedRealtime()<=scrollUntil) : SystemClock.elapsedRealtime()<=scrollUntil;
         long observationTime=SystemClock.elapsedRealtime();
         if(instagram) {
@@ -886,6 +916,11 @@ public final class ProbeService extends AccessibilityService {
         final java.util.Set<String> youtubeLabels=new java.util.TreeSet<>();
         int nodes,visitedNodes,fields,captionFields,playerMarkers;
         String overlayReasons="",sheetCandidates="";
+        String facebookSource="";
+        int facebookIndex=-1,facebookWindow=-1;
+        long facebookAt;
+        boolean facebookPlayer;
+        final java.util.List<Rect> facebookLikes=new java.util.ArrayList<>(),facebookShares=new java.util.ArrayList<>();
         final int maxNodes,maxDepth,screenWidth,screenHeight;
         final boolean verbose;
         long deadline;
@@ -952,6 +987,7 @@ public final class ProbeService extends AccessibilityService {
                 for(int j=0;j<Math.min(depth,maxDepth);j++) structure.append(" ");
                 structure.append(type).append(" id=").append(id) .append(" bounds=").append(bounds.flattenToString()).append(" children=").append(n.getChildCount()) .append(" selected=").append(n.isSelected()).append(" clickable=").append(n.isClickable()) .append(" text=").append(n.getText()==null?"none":"[redacted]") .append(" description=").append(n.getContentDescription()==null?"none":"[redacted]").append('\n');
             }
+            int facebookLikesBefore=facebookLikes.size(),facebookSharesBefore=facebookShares.size();
             boolean control=type.endsWith("Button") || type.endsWith("ImageView") || n.isSelected() || n.isClickable();
             String text=control?String.valueOf(n.getText()).toLowerCase(Locale.ROOT):"";
             String desc=control?String.valueOf(n.getContentDescription()).toLowerCase(Locale.ROOT):"";
@@ -968,6 +1004,10 @@ public final class ProbeService extends AccessibilityService {
             ytPage |= Detectors.youtube(pkg) && YouTubeSignals.page(id);
             like |= controls.contains("like") || controls.contains("पसंद") || controls.contains("favorite") || controls.contains("favourite");
             share |= controls.contains("share") || controls.contains("send") || controls.contains("शेयर");
+            if(platform.equals("Facebook") && control && FacebookSignals.railControl(nodeBounds.left,nodeBounds.top,nodeBounds.right,nodeBounds.bottom,screenWidth,screenHeight)) {
+                if(controls.contains("like") || controls.contains("पसंद"))facebookLikes.add(new Rect(nodeBounds));
+                if(controls.contains("share") || controls.contains("शेयर"))facebookShares.add(new Rect(nodeBounds));
+            }
             profile |= lowerId.contains("profile_header");
             if(!instagram) {
                 if(lowerId.contains("comment_sheet") || lowerId.contains("comments_panel") || lowerId.contains("bottom_sheet")
@@ -990,6 +1030,16 @@ public final class ProbeService extends AccessibilityService {
                     }
                     finally {
                         child.recycle();
+                    }
+                }
+            }
+            if(platform.equals("Facebook") && !facebookSource.isEmpty() && facebookSource.equals(id)
+                    && FacebookSignals.recycler(type) && visiblePlayerBounds(nodeBounds)) {
+                for(int a=facebookLikesBefore;a<facebookLikes.size();a++) {
+                    Rect l=facebookLikes.get(a);
+                    for(int b=facebookSharesBefore;b<facebookShares.size();b++) {
+                        Rect r=facebookShares.get(b);
+                        if(FacebookSignals.verticalRail(l.centerX(),l.centerY(),r.centerX(),r.centerY(),screenWidth,screenHeight))facebookPlayer=true;
                     }
                 }
             }

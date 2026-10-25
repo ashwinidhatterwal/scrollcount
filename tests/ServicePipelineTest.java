@@ -438,13 +438,68 @@ public final class ServicePipelineTest {
         check(!heldTrees.isEmpty(),"structural reader is deliberately held busy");
         check((Integer)get(s,"pagerIndex")==44 && sink.detected==40,"TREE_QUEUE_STARVES_PAGER: 40 rapid confirmed indexed events must count while a tree read is blocked; detected="+sink.detected);
     }
+    static Object facebookTree(boolean vertical)throws Exception {
+        Object like=node("com.facebook.katana:id/(name removed)","Like",true);
+        Object share=node("com.facebook.katana:id/(name removed)","Share",true);
+        for(Object n:new Object[]{like,share}) {
+            set(n,"pkg","com.facebook.katana");set(n,"type","android.widget.Button");
+            set(n,"left",900);set(n,"right",1040);set(n,"top",900);set(n,"bottom",1040);
+        }
+        if(vertical){set(share,"top",1300);set(share,"bottom",1440);}
+        else {set(like,"left",600);set(like,"right",740);}
+        Object tree=node("com.facebook.katana:id/(name removed)","",true,like,share);
+        set(tree,"pkg","com.facebook.katana");set(tree,"type","androidx.recyclerview.widget.RecyclerView");set(tree,"right",1080);
+        return tree;
+    }
+    static Object facebookFrame(ProbeService service,boolean vertical,long now)throws Exception {
+        time(now);
+        Constructor<?> ctor=snapshot.getDeclaredConstructor(String.class,int.class,int.class);ctor.setAccessible(true);
+        Object snap=ctor.newInstance("com.facebook.katana",1080,2400);
+        set(snap,"deadline",now+1000);set(snap,"facebookSource",get(service,"facebookSource"));
+        for(String name:new String[]{"facebookIndex","facebookWindow","facebookAt"})set(snap,name,get(service,name));
+        call(snap,"walk",new Class<?>[]{Class.forName("android.view.accessibility.AccessibilityNodeInfo"),int.class},facebookTree(vertical),0);
+        set(snap,"feed",get(snap,"facebookPlayer"));
+        Object out=frame("com.facebook.katana",-1,"",true,true);
+        set(out,"snapshot",snap);return out;
+    }
+    static void facebookSource(ProbeService service,int index,long now)throws Exception {
+        time(now);call(service,"applySource",new Class<?>[]{String.class,String.class,String.class,int.class,int.class,int.class,int.class,boolean.class,long.class},
+                "com.facebook.katana","com.facebook.katana:id/(name removed)","androidx.recyclerview.widget.RecyclerView",index,index+1,4096,0,true,now);
+    }
+    static void facebookPipeline()throws Exception {
+        Sink sink=new Sink();ProbeService s=service("com.facebook.katana",sink);
+        facebookSource(s,3,10000);
+        Object horizontal=facebookFrame(s,false,10100);
+        check(!(Boolean)get(get(horizontal,"snapshot"),"facebookPlayer"),"Facebook ordinary-feed horizontal actions rejected");
+        Object first=facebookFrame(s,true,10200);
+        check((Boolean)get(get(first,"snapshot"),"facebookPlayer"),"Facebook redacted player verified from subtree rail");
+        call(s,"applyScan",new Class<?>[]{result},first);
+        call(s,"applyScan",new Class<?>[]{result},facebookFrame(s,true,11000));
+        check(sink.detected==1 && ProbeStore.counter.accepted==0,"Facebook initial exposure baseline");
+        facebookSource(s,4,12000);
+        call(s,"applyScan",new Class<?>[]{result},facebookFrame(s,true,12100));
+        call(s,"applyScan",new Class<?>[]{result},facebookFrame(s,true,13000));
+        call(s,"applyScan",new Class<?>[]{result},facebookFrame(s,true,14000));
+        check(sink.detected==2 && ProbeStore.counter.accepted==1,"Facebook stable advance counted once without captions");
+        call(s,"applyScan",new Class<?>[]{result},facebookFrame(s,true,20000));
+        check(sink.detected==2 && ((CountingEngine)get(s,"engine")).live(20000)!=null,"long Facebook watch preserves confirmed exposure");
+        facebookSource(s,5,21000);
+        Object wrongWindow=facebookFrame(s,true,21100);set(wrongWindow,"window",12);
+        call(s,"applyScan",new Class<?>[]{result},wrongWindow);
+        Object panel=facebookFrame(s,true,22000);set(get(panel,"snapshot"),"overlay",true);
+        call(s,"applyScan",new Class<?>[]{result},panel);
+        call(s,"applyScan",new Class<?>[]{result},facebookFrame(s,true,28000));
+        check(sink.detected==2,"Facebook wrong window, overlay and expired new position rejected");
+        call(s,"invalidateReads",new Class<?>[]{});
+        check((Integer)get(s,"facebookIndex")==-1,"Facebook window/read reset clears position");
+    }
     public static void main(String[] args)throws Exception {
         snapshot=Class.forName("in.scrollcount.probe.ProbeService$Snapshot");result=Class.forName("in.scrollcount.probe.ProbeService$ScanResult");
         int failures=0;
-        for(String name:new String[]{"missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels","siblingSheetPipeline","sourceBehindSlowTree"})try {
+        for(String name:new String[]{"facebookPipeline","missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels","siblingSheetPipeline","sourceBehindSlowTree"})try {
             Method test=ServicePipelineTest.class.getDeclaredMethod(name);test.invoke(null);
         }catch(InvocationTargetException e){failures++;System.err.println(name+": "+e.getCause());e.getCause().printStackTrace();}
         check(failures==0,"service pipeline regressions: "+failures);
-        System.out.println("PASS: 21 service cases, modern/legacy/overlay/sibling-sheet layouts and 40 rapid indexed events during a blocked tree read (340 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
+        System.out.println("PASS: 22 service cases including redacted-ID Facebook snapshot/source/counting guards, modern/legacy/overlay/sibling-sheet layouts and 40 rapid indexed events during a blocked tree read (340 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
     }
 }
