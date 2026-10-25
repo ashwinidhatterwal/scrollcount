@@ -10,6 +10,7 @@
 <intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="scrollcount" android:host="invite"/></intent-filter><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
 <activity android:name=".OnboardingActivity" android:exported="false"/>
 <activity android:name=".DiagnosticsActivity" android:exported="false"/>
+<provider android:name=".DiagnosticProvider" android:authorities="${applicationId}.diagnostics" android:exported="false" android:grantUriPermissions="true"/>
 <service android:name=".HourlyFriendJob" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true"/>
 <service android:name=".ProbeService" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true"><intent-filter><action android:name="android.accessibilityservice.AccessibilityService"/></intent-filter><meta-data android:name="android.accessibilityservice" android:resource="@xml/probe_service"/></service>
 </application></manifest>

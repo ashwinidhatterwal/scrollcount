@@ -15,7 +15,7 @@ final class FriendsPage {
     private final Runnable countObserver=()->{if(visible)publish();};private long generation,lastPublishRevision=-1,lastPublishDay=-1;
     private Dialog comparison;private String compared="",renderKey="";
     private long myReels,myShorts;private String myDay="";
-    private final Runnable loop=new Runnable(){public void run(){if(!visible)return;publish();renderCards();handler.postDelayed(this,60000);}};
+    private final Runnable loop=new Runnable(){public void run(){if(!visible)return;publish();renderCards();if(comparison!=null&&comparison.isShowing()){FriendStore.Friend f=store.friends.get(compared);if(f!=null)fillComparison(f);}handler.postDelayed(this,60000);}};
     FriendsPage(Activity a,Ui u,LinearLayout b){activity=a;ui=u;body=b;store=FriendStore.get(a);sync=FriendSync.get(a);}
     void render(){
         LinearLayout header=ui.row();TextView title=ui.text("Friends",30,ui.ink,true);Ui.markHeading(title);header.addView(title,new LinearLayout.LayoutParams(0,-2,1));
@@ -67,47 +67,65 @@ final class FriendsPage {
             LinearLayout empty=ui.card();empty.addView(ui.text("Your friends appear here",19,ui.ink,true));empty.addView(ui.text("Add someone to compare your day",14,ui.muted,false));cards.addView(empty);return;
         }
         for(FriendStore.Friend f:store.friends.values()){
-            LinearLayout card=ui.card(),row=ui.row();TextView avatar=ui.text(f.name.isEmpty()?"?":new String(Character.toChars(f.name.codePointAt(0))).toUpperCase(Locale.getDefault()),22,ui.accent,true);avatar.setGravity(Gravity.CENTER);avatar.setBackground(ui.shape(ui.soft,22));LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(44),ui.dp(44));ap.setMargins(0,0,ui.dp(12),0);row.addView(avatar,ap);
-            LinearLayout words=ui.column();words.addView(ui.text(f.name,19,ui.ink,true));row.addView(words,new LinearLayout.LayoutParams(0,-2,1));row.addView(ui.text("›",26,ui.muted,false));card.addView(row);ui.gap(card,16);
-            LinearLayout values=ui.row();values.addView(counter("Reels",f.received>0?Ui.number(f.reels):"—"),new LinearLayout.LayoutParams(0,-2,1));values.addView(counter("Shorts",f.received>0?Ui.number(f.shorts):"—"),new LinearLayout.LayoutParams(0,-2,1));card.addView(values);ui.gap(card,12);
-            card.addView(ui.text(updated(f),12,ui.muted,false));card.setFocusable(true);card.setOnClickListener(v->openComparison(f));card.setContentDescription(f.name+", Reels "+(f.received>0?f.reels:"not shared")+", Shorts "+(f.received>0?f.shorts:"not shared")+", "+updated(f)+". Tap to compare.");cards.addView(card);ui.gap(cards,14);
+            LinearLayout card=ui.card();card.setPadding(ui.dp(14),ui.dp(12),ui.dp(14),ui.dp(12));
+            LinearLayout row=ui.row();TextView avatar=avatar(f.name,40);
+            LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(40),ui.dp(40));ap.setMargins(0,0,ui.dp(12),0);row.addView(avatar,ap);
+            LinearLayout words=ui.column();TextView name=ui.text(f.name,17,ui.ink,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);words.addView(name);
+            words.addView(ui.text(updated(f),11,ui.muted,false));row.addView(words,new LinearLayout.LayoutParams(0,-2,1));
+            LinearLayout count=ui.column();count.setPadding(ui.dp(10),0,0,0);TextView value=ui.text(f.received>0?Ui.number(f.reels+f.shorts):"—",25,ui.ink,true);value.setGravity(Gravity.END);count.addView(value);
+            TextView label=ui.text("Scrolls",11,ui.muted,false);label.setGravity(Gravity.END);count.addView(label);
+            if(activity.getResources().getConfiguration().fontScale>1.3f){card.addView(row);ui.gap(card,6);card.addView(count);}else{row.addView(count);card.addView(row);}
+            card.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(ui.dark?0x22ffffff:0x16000000),card.getBackground(),null));
+            card.setFocusable(true);card.setOnClickListener(v->openComparison(f));card.setContentDescription(f.name+", "+(f.received>0?Ui.number(f.reels+f.shorts):"No shared")+" scrolls, "+updated(f)+". Tap to compare.");cards.addView(card);ui.gap(cards,10);
         }
     }
-    private LinearLayout counter(String label,String value){LinearLayout c=ui.column();c.addView(ui.text(label,12,ui.muted,false));c.addView(ui.text(value,30,ui.ink,true));return c;}
+    private TextView avatar(String name,int size){
+        TextView view=ui.text(name.isEmpty()?"?":new String(Character.toChars(name.codePointAt(0))).toUpperCase(Locale.getDefault()),18,ui.accent,true);
+        view.setGravity(Gravity.CENTER);view.setBackground(ui.shape(ui.soft,size/2));return view;
+    }
     private String updated(FriendStore.Friend f){
         if(f.received==0)return "No update yet";
-        long minutes=Math.max(0,System.currentTimeMillis()-f.received)/60000;
-        String age=minutes<1?"just now":minutes<60?minutes+" min ago":minutes<1440?minutes/60+"h ago":minutes/1440+" days ago";
-        return (f.day.equals(FriendSnapshot.day(System.currentTimeMillis()))?"Today":f.day)+" · "+age;
+        String clock=android.text.format.DateFormat.getTimeFormat(activity).format(new java.util.Date(f.received));
+        String date=FriendSnapshot.day(f.received).equals(FriendSnapshot.day(System.currentTimeMillis()))?"":new java.text.SimpleDateFormat("d MMM",Locale.getDefault()).format(new java.util.Date(f.received))+", ";
+        return "Updated "+date+clock;
     }
-    private long comparedReels=-1,comparedShorts=-1,ownReels=-1,ownShorts=-1;private String comparedDay="";private long comparedReceived=-1;
+    private long comparedReels=-1,comparedShorts=-1,ownReels=-1,ownShorts=-1;private String comparedDay="";private long comparedReceived=-1;private String comparedName="",comparedCalendar="";
     private void openComparison(FriendStore.Friend f){
-        compared=f.id;comparedReels=ownReels=-1;comparison=new Dialog(activity);fillComparison(f);Window w=comparison.getWindow();if(w!=null){w.setBackgroundDrawableResource(android.R.color.transparent);w.setGravity(Gravity.BOTTOM);w.setWindowAnimations(android.R.style.Animation_Dialog);}comparison.show();if(w!=null)w.setLayout(-1,-2);
+        if(comparison!=null)comparison.dismiss();compared=f.id;comparedReels=ownReels=-1;comparison=new Dialog(activity);fillComparison(f);Window w=comparison.getWindow();if(w!=null){w.setBackgroundDrawableResource(android.R.color.transparent);w.setGravity(Gravity.BOTTOM);w.setWindowAnimations(android.R.style.Animation_Dialog);}comparison.show();if(w!=null)w.setLayout(-1,-2);
     }
     private void fillComparison(FriendStore.Friend f){
-        if(comparedReels==f.reels&&comparedShorts==f.shorts&&ownReels==myReels&&ownShorts==myShorts&&comparedDay.equals(f.day+myDay)&&comparedReceived==f.received)return;
-        comparedReels=f.reels;comparedShorts=f.shorts;ownReels=myReels;ownShorts=myShorts;comparedDay=f.day+myDay;comparedReceived=f.received;
+        if(comparedReels==f.reels&&comparedShorts==f.shorts&&ownReels==myReels&&ownShorts==myShorts&&comparedDay.equals(f.day+myDay)&&comparedReceived==f.received&&comparedName.equals(f.name)&&comparedCalendar.equals(FriendSnapshot.day(System.currentTimeMillis())))return;
+        comparedReels=f.reels;comparedShorts=f.shorts;ownReels=myReels;ownShorts=myShorts;comparedDay=f.day+myDay;comparedReceived=f.received;comparedName=f.name;comparedCalendar=FriendSnapshot.day(System.currentTimeMillis());
         LinearLayout outer=ui.column();outer.setPadding(ui.dp(12),ui.dp(12),ui.dp(12),ui.dp(12));LinearLayout sheet=ui.card();outer.addView(sheet);
         View handle=new View(activity);handle.setBackground(ui.shape(ui.line,3));LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(ui.dp(40),ui.dp(4));hp.gravity=Gravity.CENTER_HORIZONTAL;hp.setMargins(0,0,0,ui.dp(18));sheet.addView(handle,hp);
-        LinearLayout heading=ui.row();heading.addView(ui.text("You & "+f.name,24,ui.ink,true),new LinearLayout.LayoutParams(0,-2,1));TextView close=ui.text("×",28,ui.muted,false);close.setGravity(Gravity.CENTER);close.setContentDescription("Close comparison");heading.addView(close,new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));close.setOnClickListener(v->comparison.dismiss());sheet.addView(heading);
-        if(f.received>0&&f.day.equals(myDay)){
-            TextView difference=ui.text(FriendSnapshot.comparison(myReels+myShorts,f.reels+f.shorts),18,ui.accent,true);sheet.addView(difference);ui.gap(sheet,16);
-            sheet.addView(new FriendComparisonView(ui,myReels+myShorts,f.reels+f.shorts,f.name),new LinearLayout.LayoutParams(-1,ui.dp(136*Math.max(1,activity.getResources().getConfiguration().fontScale))));
-            LinearLayout table=ui.row();table.addView(ui.text("",13,ui.muted,false),new LinearLayout.LayoutParams(0,-2,1));table.addView(tableValue("You"),new LinearLayout.LayoutParams(0,-2,1));table.addView(tableValue(f.name),new LinearLayout.LayoutParams(0,-2,1));sheet.addView(table);
-            comparisonRow(sheet,"Reels",myReels,f.reels);comparisonRow(sheet,"Shorts",myShorts,f.shorts);
-        }else{ui.gap(sheet,16);sheet.addView(ui.text(f.received==0?"No shared update yet":"Waiting for today’s update",16,ui.muted,false));}
-        ui.gap(sheet,14);sheet.addView(ui.text(updated(f),12,ui.muted,false));ui.gap(sheet,16);sheet.addView(ui.button("Remove friend",false,()->remove(f)));
+        LinearLayout heading=ui.row();heading.addView(avatar(f.name,44),new LinearLayout.LayoutParams(ui.dp(44),ui.dp(44)));
+        LinearLayout title=ui.column();title.setPadding(ui.dp(12),0,0,0);title.addView(ui.text(f.name,22,ui.ink,true));title.addView(ui.text(updated(f),12,ui.muted,false));heading.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        TextView close=ui.text("×",26,ui.muted,false);close.setGravity(Gravity.CENTER);close.setContentDescription("Close comparison");close.setFocusable(true);heading.addView(close,new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));close.setOnClickListener(v->comparison.dismiss());sheet.addView(heading);ui.gap(sheet,20);
+        TextView period=ui.text("TODAY · SCROLLS",11,ui.muted,true);sheet.addView(period);ui.gap(sheet,10);
+        boolean current=f.received>0&&f.day.equals(FriendSnapshot.day(System.currentTimeMillis()));
+        boolean mineCurrent=myDay.equals(FriendSnapshot.day(System.currentTimeMillis()));
+        LinearLayout totals=ui.row();totals.setGravity(Gravity.TOP);
+        totals.addView(comparisonTotal("You",mineCurrent?Ui.number(myReels+myShorts):"—",ui.accent),new LinearLayout.LayoutParams(0,-2,1));
+        totals.addView(comparisonTotal(f.name,current?Ui.number(f.reels+f.shorts):"—",ui.dark?0xffbaa9ee:0xff8270b5),new LinearLayout.LayoutParams(0,-2,1));sheet.addView(totals);ui.gap(sheet,16);
+        if(current&&mineCurrent){
+            TextView difference=ui.text(FriendSnapshot.comparison(myReels+myShorts,f.reels+f.shorts),16,ui.accent,true);difference.setPadding(ui.dp(14),ui.dp(12),ui.dp(14),ui.dp(12));difference.setBackground(ui.shape(ui.soft,14));sheet.addView(difference);ui.gap(sheet,14);
+            sheet.addView(new FriendComparisonView(ui,myReels+myShorts,f.reels+f.shorts,f.name),new LinearLayout.LayoutParams(-1,ui.dp(144*Math.max(1,activity.getResources().getConfiguration().fontScale))));
+        }else{sheet.addView(ui.text(f.received==0?"No shared update yet":!current?"Last shared: "+f.day+" · "+Ui.number(f.reels+f.shorts)+" scrolls":"Loading your total…",14,ui.muted,false));}
+        ui.gap(sheet,18);sheet.addView(ui.button("Sync now",true,()->sync.refresh()));ui.gap(sheet,8);
+        TextView remove=ui.text("Remove friend",13,ui.muted,false);remove.setGravity(Gravity.CENTER);remove.setMinHeight(ui.dp(48));remove.setFocusable(true);remove.setOnClickListener(v->remove(f));sheet.addView(remove);
         ScrollView scroll=new ScrollView(activity){@Override protected void onMeasure(int width,int height){int limit=activity.getResources().getDisplayMetrics().heightPixels*85/100;int requested=View.MeasureSpec.getSize(height);super.onMeasure(width,View.MeasureSpec.makeMeasureSpec(requested==0?limit:Math.min(requested,limit),View.MeasureSpec.AT_MOST));}};scroll.setFillViewport(false);scroll.addView(outer);scroll.setLayoutParams(new android.view.ViewGroup.LayoutParams(-1,-2));comparison.setContentView(scroll);
         if(comparison.getWindow()!=null)comparison.getWindow().setLayout(-1,-2);
     }
-    private TextView tableValue(String text){TextView t=ui.text(text,15,ui.ink,true);t.setGravity(Gravity.END);t.setMaxLines(1);t.setEllipsize(android.text.TextUtils.TruncateAt.END);return t;}
-    private void comparisonRow(LinearLayout parent,String label,long mine,long theirs){LinearLayout row=ui.row();row.setPadding(0,ui.dp(10),0,ui.dp(10));row.addView(ui.text(label,14,ui.muted,false),new LinearLayout.LayoutParams(0,-2,1));row.addView(tableValue(Ui.number(mine)),new LinearLayout.LayoutParams(0,-2,1));row.addView(tableValue(Ui.number(theirs)),new LinearLayout.LayoutParams(0,-2,1));parent.addView(row);}
+    private LinearLayout comparisonTotal(String name,String value,int color){
+        LinearLayout box=ui.column();TextView label=ui.text(name,13,ui.muted,false);label.setMaxLines(2);label.setEllipsize(android.text.TextUtils.TruncateAt.END);box.addView(label);
+        TextView count=ui.text(value,34,color,true);count.setMaxLines(1);count.setAutoSizeTextTypeUniformWithConfiguration(18,34,1,android.util.TypedValue.COMPLEX_UNIT_SP);box.addView(count,new LinearLayout.LayoutParams(-1,ui.dp(54)));return box;
+    }
     private void add(){
         new AlertDialog.Builder(activity).setTitle("Add a friend").setItems(new String[]{"Create invitation","Accept invitation"},(d,i)->{if(i==0){if(store.id().isEmpty())setup(this::invite,store.server());else invite();}else acceptInput();}).setNegativeButton("Cancel",null).show();
     }
     private void setup(Runnable next,String endpointHint){
         LinearLayout c=ui.column();c.setPadding(ui.dp(24),ui.dp(12),ui.dp(24),0);EditText name=field("Your name"),server=field("Server address");server.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_URI);server.setText(endpointHint.isEmpty()?"https://scrollcount-friends.actionbridge.workers.dev":endpointHint);c.addView(name);c.addView(server);
-        c.addView(ui.text("Accepted friends receive your daily Reels and Shorts totals. This server stores your name, profile ID, friendships, public key and encrypted updates; updates expire after 7 days. Sharing uploads in the background after new counts and around each hour. You can pause it or delete your profile.",13,ui.muted,false));
+        c.addView(ui.text("Accepted friends receive your daily scroll totals. This server stores your name, profile ID, friendships, public key and encrypted updates; updates expire after 7 days. Sharing uploads in the background after new counts and around each hour. You can pause it or delete your profile.",13,ui.muted,false));
         c.addView(ui.button("Privacy policy",false,()->new AlertDialog.Builder(activity).setTitle("Privacy policy").setMessage(Privacy.TEXT+ReleaseInfo.summary()).setPositiveButton("Close",null).show()));
         AlertDialog dialog=new AlertDialog.Builder(activity).setTitle("Your profile").setView(c).setNegativeButton("Not now",null).setPositiveButton("Agree & continue",null).create();dialog.setOnShowListener(d->dialog.getButton(-1).setOnClickListener(v->{
             String endpoint=server.getText().toString().trim().replaceAll("/$","");String n=name.getText().toString().trim();if(!FriendApi.validServer(endpoint)){server.setError("Enter the deployed HTTPS workers.dev address");return;}if(n.isEmpty()||n.length()>40){name.setError("Use 1–40 characters");return;}
@@ -146,7 +164,7 @@ final class FriendsPage {
     }
     private void preview(String code){
         api.request(store,"/preview","POST",json("code",code),(r,e)->{if(activity.isDestroyed()||!visible)return;if(!e.isEmpty()){toast(e);return;}
-            new AlertDialog.Builder(activity).setTitle("Connect with "+r.optString("name","friend")+"?").setMessage("Share your daily Reels and Shorts totals.").setNegativeButton("Cancel",null).setPositiveButton("Add friend",(d,w)->api.request(store,"/accept","POST",json("code",code),(result,error)->{if(!error.isEmpty()){toast(error);return;}try{String id=result.getString("id");store.friends.put(id,new FriendStore.Friend(id,result.getString("name")));store.save();renderCards();}catch(JSONException ignored){}toast("Friend added");sync.refresh();})).show();
+            new AlertDialog.Builder(activity).setTitle("Connect with "+r.optString("name","friend")+"?").setMessage("Share your daily scroll totals.").setNegativeButton("Cancel",null).setPositiveButton("Add friend",(d,w)->api.request(store,"/accept","POST",json("code",code),(result,error)->{if(!error.isEmpty()){toast(error);return;}try{String id=result.getString("id");store.friends.put(id,new FriendStore.Friend(id,result.getString("name")));store.save();renderCards();}catch(JSONException ignored){}toast("Friend added");sync.refresh();})).show();
         });
     }
     private void remove(FriendStore.Friend f){new AlertDialog.Builder(activity).setTitle("Remove "+f.name+"?").setMessage("Stops future sharing, deletes server snapshots between you, and removes their saved card on this phone. Previously shared totals may still exist on their phone.").setNegativeButton("Keep friend",null).setPositiveButton("Remove",(d,w)->api.request(store,"/friend","DELETE",json("id",f.id),(r,e)->{if(!e.isEmpty()){toast(e);return;}store.friends.remove(f.id);store.save();sync.configurationChanged();if(comparison!=null)comparison.dismiss();renderCards();})).show();}

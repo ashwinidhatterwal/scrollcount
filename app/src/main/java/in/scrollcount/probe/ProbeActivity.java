@@ -202,7 +202,6 @@ public final class ProbeActivity extends Activity {
         total.setSingleLine(true);
         total.setAutoSizeTextTypeUniformWithConfiguration(32,72,2,android.util.TypedValue.COMPLEX_UNIT_SP);
         hero.addView(total,new LinearLayout.LayoutParams(-1,ui.dp(100)));
-        hero.addView(ui.text("Reels & Shorts",22,0xfff5fff6,true));
         ui.gap(hero,12);
         
         addCard(hero);
@@ -450,7 +449,7 @@ public final class ProbeActivity extends Activity {
         ui.gap(help,8);
         help.addView(ui.button("Compatibility & diagnostics",false,()->message("Compatibility",ProbeStore.appVersions+"\n\n"+ProbeStore.signals+"\n\nThese versions have been observed, not certified. Open diagnostics for a local test report.")));
         ui.gap(help,8);
-        switchRow(help,"Local diagnostics","For troubleshooting",prefs.getBoolean("diagnostics",false),value-> {
+        switchRow(help,"Local diagnostics","For troubleshooting",prefs.getBoolean("diagnostics",true),value-> {
             prefs.edit().putBoolean("diagnostics",value).apply();
             ProbeStore.setDiagnostics(value,(getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0);
         });
@@ -673,7 +672,7 @@ public final class ProbeActivity extends Activity {
             }
         }
         ProbeStore.appVersions=versions.toString();
-        ProbeStore.setDiagnostics(prefs.getBoolean("diagnostics",false),(getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0);
+        ProbeStore.setDiagnostics(prefs.getBoolean("diagnostics",true),(getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0);
     }
     @Override protected void onSaveInstanceState(Bundle state) {
         state.putInt("tab",tab);

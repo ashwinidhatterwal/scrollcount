@@ -28,7 +28,7 @@ public final class ProbeService extends AccessibilityService {
             if(!prefs.getBoolean("liveBadge",false)) { if(indicator!=null)indicator.hide(); }
             else refreshIndicator();
         }
-        if("diagnostics".equals(key)) ProbeStore.setDiagnostics(prefs.getBoolean("diagnostics",false),(getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0);
+        if("diagnostics".equals(key)) ProbeStore.setDiagnostics(prefs.getBoolean("diagnostics",true),(getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0);
         if("running".equals(key) || "consentVersion".equals(key)) {
             if(!trackingAllowed()) {
                 invalidateReads();
@@ -107,7 +107,7 @@ public final class ProbeService extends AccessibilityService {
         engine=new CountingEngine(HistoryStore.get(this));
         guard("sharing initialization",()->FriendSync.get(this));
         indicator=new PlayerIndicator(this);
-        ProbeStore.setDiagnostics(preferences.getBoolean("diagnostics",false),(getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0);
+        ProbeStore.setDiagnostics(preferences.getBoolean("diagnostics",true),(getApplicationInfo().flags&android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0);
         preferences.registerOnSharedPreferenceChangeListener(preferenceListener);
         android.content.IntentFilter filter=new android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF);
         filter.addAction(android.content.Intent.ACTION_DATE_CHANGED);

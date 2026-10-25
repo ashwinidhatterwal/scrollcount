@@ -39,3 +39,5 @@ javac -cp "$probe_test_dir" -d "$probe_test_dir" tests/InstagramAsyncRegressionT
 java -cp "$probe_test_dir" in.scrollcount.probe.InstagramAsyncRegressionTest
 javac -cp "$probe_test_dir" -d "$probe_test_dir" app/src/main/java/in/scrollcount/probe/InstagramIdentity.java tests/InstagramIdentityTest.java
 java -cp "$probe_test_dir" in.scrollcount.probe.InstagramIdentityTest
+javac -cp "$probe_test_dir" -d "$probe_test_dir" app/src/main/java/in/scrollcount/probe/DiagnosticFiles.java tests/DiagnosticFilesTest.java
+java -cp "$probe_test_dir" in.scrollcount.probe.DiagnosticFilesTest

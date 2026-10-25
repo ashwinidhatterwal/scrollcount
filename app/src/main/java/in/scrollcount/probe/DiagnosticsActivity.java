@@ -7,6 +7,7 @@ import android.widget.*;
 public final class DiagnosticsActivity extends Activity {
     private final Handler handler=new Handler();
     private TextView output;
+    private static final int SAVE_REPORT=42;
     private final Runnable refresh=new Runnable() {
         public void run() {
             output.setText(ProbeStore.report()+"\n\n"+ServiceHealth.report(DiagnosticsActivity.this));
@@ -38,17 +39,14 @@ public final class DiagnosticsActivity extends Activity {
         body.addView(back);
         TextView note=new TextView(this);
         note.setTextColor(ui.muted);
-        note.setText("Enable Local diagnostics in Settings before a test. Service-health events remain locally after restart; label diagnostics stay in memory; release builds never retain tree dumps. Diagnostics are temporary and sanitized. Video changes here differ from 'videos seen': the home screen and Scrolls badge count all confirmed items, including quick skips; Seen applies a 2-second threshold.");
+        note.setText("Local diagnostics are on by default; you can turn them off in Settings. Service-health events remain locally after restart; label diagnostics stay in memory; release builds never retain tree dumps. Diagnostics are temporary and sanitized. Video changes here differ from 'videos seen': the home screen and Scrolls badge count all confirmed items, including quick skips; Seen applies a 2-second threshold.");
         body.addView(note);
-        Button share=new Button(this);
-        share.setText("Share sanitized report");
-        share.setOnClickListener(v-> {
-            Intent i=new Intent(Intent.ACTION_SEND);
-            i.setType("text/plain");
-            i.putExtra(Intent.EXTRA_TEXT,ProbeStore.report()+"\n\n"+ServiceHealth.report(this));
-            startActivity(Intent.createChooser(i,"Share diagnostics"));
-        });
-        body.addView(share);
+        body.addView(ui.button("Save diagnostic file",true,()-> {
+            Intent save=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("text/plain")
+                    .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,fileName());
+            try{startActivityForResult(save,SAVE_REPORT);}catch(android.content.ActivityNotFoundException e){toast("No file picker available. Use Share diagnostic file.");}
+        }));
+        body.addView(ui.button("Share diagnostic file",false,this::shareFile));
         Button clear=new Button(this);
         clear.setText("Clear service health log");
         clear.setOnClickListener(v->ServiceHealth.clear(this));
@@ -58,6 +56,39 @@ public final class DiagnosticsActivity extends Activity {
         output.setTextColor(ui.ink);
         output.setTextIsSelectable(true);
         body.addView(output);
+    }
+    private String report(){return ProbeStore.report()+"\n\n"+ServiceHealth.report(this);}
+    private String fileName(){return "ScrollCount-diagnostics-"+System.currentTimeMillis()+"-"+java.util.UUID.randomUUID()+".txt";}
+    private void toast(String text){if(!isDestroyed())Toast.makeText(this,text,Toast.LENGTH_LONG).show();}
+    private void shareFile(){
+        final String text=report(),name=fileName();
+        new Thread(()-> {
+            try{
+                java.io.File file=DiagnosticFiles.resolve(getCacheDir(),name);
+                java.io.File directory=file.getParentFile();if(!directory.isDirectory()&&!directory.mkdirs())throw new java.io.IOException("Unavailable cache");
+                // Retain recent attachments so a receiving app can read after the chooser closes.
+                java.io.File[] old=directory.listFiles();if(old!=null)for(java.io.File f:old)if(f.lastModified()<System.currentTimeMillis()-7L*24*60*60*1000)f.delete();
+                try(java.io.OutputStream out=new java.io.FileOutputStream(file)){out.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+                runOnUiThread(()-> {
+                    if(isDestroyed())return;
+                    android.net.Uri uri=new android.net.Uri.Builder().scheme("content").authority(getPackageName()+".diagnostics").appendPath(name).build();
+                    Intent share=new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM,uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    share.setClipData(android.content.ClipData.newRawUri("ScrollCount diagnostics",uri));
+                    try{startActivity(Intent.createChooser(share,"Share diagnostic file"));}catch(android.content.ActivityNotFoundException e){toast("No sharing app available. Use Save diagnostic file.");}
+                });
+            }catch(java.io.IOException|RuntimeException e){runOnUiThread(()->toast("Could not create diagnostic file. Try Save diagnostic file."));}
+        },"diagnostic-export").start();
+    }
+    @Override protected void onActivityResult(int request,int result,Intent data){
+        super.onActivityResult(request,result,data);
+        if(request!=SAVE_REPORT||result!=RESULT_OK||data==null||data.getData()==null)return;
+        final android.net.Uri uri=data.getData();final String text=report();
+        new Thread(()-> {
+            try(java.io.OutputStream out=getContentResolver().openOutputStream(uri,"wt")){
+                if(out==null)throw new java.io.IOException("No destination");out.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                runOnUiThread(()->toast("Diagnostic file saved"));
+            }catch(java.io.IOException|RuntimeException e){runOnUiThread(()->toast("Could not save diagnostic file. Please try again."));}
+        },"diagnostic-save").start();
     }
     @Override public void onResume() {
         super.onResume();
