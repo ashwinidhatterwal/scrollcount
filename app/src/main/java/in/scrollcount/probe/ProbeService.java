@@ -135,6 +135,7 @@ public final class ProbeService extends AccessibilityService {
     private final java.util.Set<Runnable> readTimers=new java.util.HashSet<>();
     private void invalidateReads() {
         readEpoch++;reader.cancelPending();sourceReader.cancelPending();
+        handler.removeCallbacks(browserTask);browserQueued=false;
         resetFacebook();snapchatMovementAt=0;snapchatMovementWindow=-1;
         instagramPendingAt=-1;instagramPendingWindow=-1;
         for(Runnable timeout:readTimers)handler.removeCallbacks(timeout);
@@ -166,7 +167,9 @@ public final class ProbeService extends AccessibilityService {
     private boolean queued;
     private long generation;
     // Browser Shorts (youtube.com/shorts in a mobile browser). Only a salted hash of the id is kept.
-    private String browserPkg,browserIdentity;
+    private String browserPkg,browserIdentity,browserMode="none";
+    private long browserMovementAt;
+    private int browserRetries;
     private boolean browserQueued;
     private long browserReadAt;
     private final Runnable browserTask=()->guard("browser read",this::readBrowser);
@@ -240,6 +243,10 @@ public final class ProbeService extends AccessibilityService {
                 && indicator.ownsWindow(event.getWindowId()))return;
         // Browsers host arbitrary sites; they get their own address-bar-gated path (see browserEvent).
         if(BrowserSignals.browser(pkg)) { browserEvent(event,pkg); return; }
+        if(browserPkg!=null && (Detectors.forPackage(pkg)!=null || event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+                || event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED)) {
+            invalidateReads();browserPkg=browserIdentity=null;browserMode="none";browserMovementAt=0;
+        }
         ShortVideoDetector detector=Detectors.forPackage(pkg);
         if(detector==null) {
             if(event.getEventType()!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.getEventType()!=AccessibilityEvent.TYPE_WINDOWS_CHANGED)return;
@@ -298,8 +305,8 @@ public final class ProbeService extends AccessibilityService {
         int type=event.getEventType();
         if(type!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && type!=AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
                 && type!=AccessibilityEvent.TYPE_VIEW_SCROLLED && type!=AccessibilityEvent.TYPE_VIEW_CLICKED)return;
-        if(!ProbeStore.target.isEmpty()) {
-            // Coming from a supported app: close its session first, as stopForReset does.
+        if(!pkg.equals(ProbeStore.target)) {
+            // Switching app/browser closes the old session and invalidates its pending reads.
             invalidateReads();
             engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
             hideIndicator();
@@ -308,10 +315,14 @@ public final class ProbeService extends AccessibilityService {
             queued=quickQueued=false;
             youtubeFast.reset();
             instagramConfirmedAt=youtubeConfirmedAt=lastPagerAt=0;
-            ProbeStore.reset("");
+            ProbeStore.reset(pkg);
+            browserIdentity=null;browserMode="none";browserMovementAt=0;
             applyProfile();
         }
         browserPkg=pkg;
+        ProbeStore.events++;browserRetries=0;
+        if(type==AccessibilityEvent.TYPE_VIEW_SCROLLED)browserMovementAt=SystemClock.elapsedRealtime();
+        ProbeStore.add(SystemClock.elapsedRealtime()+" browser event="+type+" package="+pkg);
         if(type==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)invalidateReads();
         if(browserQueued)return;
         browserQueued=true;
@@ -319,70 +330,83 @@ public final class ProbeService extends AccessibilityService {
         long gap=browserIdentity!=null?250:900;
         handler.postDelayed(browserTask,Math.max(0,gap-(SystemClock.elapsedRealtime()-browserReadAt)));
     }
-    /** Reads only the address bar. No page content is touched unless the bar says youtube.com/shorts/. */
+    /** Read toolbar URLs; only a confirmed YouTube domain permits the bounded player fallback. */
     private void readBrowser() {
         browserQueued=false;
         final String pkg=browserPkg;
         if(pkg==null || destroyed || !trackingAllowed())return;
         browserReadAt=SystemClock.elapsedRealtime();
         final long epoch=readEpoch;
-        final String barId=BrowserSignals.urlBarId(pkg);
+        final byte[] salt=ProbeStore.salt.clone();
         submitRead("browser",epoch,()-> {
-            int state=BrowserSignals.UNAVAILABLE;
-            String identity=null;
+            BrowserReader.Result result=new BrowserReader.Result();
             AccessibilityNodeInfo root=null;
+            long started=SystemClock.elapsedRealtime();
             try {
                 root=getRootInActiveWindow();
-                if(root!=null && pkg.equals(String.valueOf(root.getPackageName()))) {
-                    java.util.List<AccessibilityNodeInfo> bars=root.findAccessibilityNodeInfosByViewId(barId);
-                    try {
-                        for(AccessibilityNodeInfo bar:bars) {
-                            // Never read the bar while the user may be typing in it.
-                            if(bar.isFocused() || bar.isPassword()) { state=BrowserSignals.EDITING; break; }
-                            BrowserSignals.Reading reading=BrowserSignals.parse(bar.getText());
-                            state=reading.state;
-                            if(reading.shortId!=null)identity=BrowserSignals.identity(ProbeStore.salt.clone(),reading.shortId);
-                            break;
-                        }
-                    }
-                    finally { for(AccessibilityNodeInfo bar:bars)bar.recycle(); }
-                }
+                result=BrowserReader.read(root,pkg,salt);
             }
-            catch(RuntimeException error) { ServiceHealth.failure("browser address bar",error); }
+            catch(RuntimeException error) { ServiceHealth.failure("browser read",error); }
             finally { if(root!=null)root.recycle(); }
-            final int resultState=state;
-            final String resultIdentity=identity;
-            handler.post(()->guard("browser result",()->applyBrowser(epoch,resultState,resultIdentity)));
+            final BrowserReader.Result reading=result;
+            final long duration=SystemClock.elapsedRealtime()-started;
+            handler.post(()->guard("browser result",()-> {
+                if(epoch!=readEpoch || !pkg.equals(browserPkg) || destroyed || !trackingAllowed())return;
+                ProbeStore.scans++;ProbeStore.scanTimeMs+=duration;ProbeStore.maxScanMs=Math.max(ProbeStore.maxScanMs,duration);
+                if(reading.cut)ProbeStore.truncated++;
+                ProbeStore.signals=reading.metadata();
+                ProbeStore.decision(SystemClock.elapsedRealtime()+" "+reading.metadata());
+                applyBrowser(epoch,reading.state,reading.identity,reading.mode);
+            }));
         },()->{});
     }
-    private void applyBrowser(long epoch,int state,String identity) {
+    private void applyBrowser(long epoch,int state,String identity,String mode) {
         if(epoch!=readEpoch || destroyed || !trackingAllowed())return;
         long now=SystemClock.elapsedRealtime();
         if(state==BrowserSignals.SHORTS && identity!=null) {
-            // A different app may have used the shared counter since our last Short: start a fresh baseline.
-            if(!ProbeStore.counter.isCommitted(browserIdentity))ProbeStore.counter.forgetFingerprints();
+            if(browserIdentity!=null && !browserMode.equals(mode)) {
+                // Hiding/revealing the toolbar must not turn the same item into a second exposure.
+                ProbeStore.counter.aliasIdentity(browserIdentity,identity);
+                engine.aliasIdentity(browserIdentity,identity);
+                browserIdentity=identity;
+            }
             int before=ProbeStore.counter.accepted;
-            ProbeStore.status=ProbeStore.counter.verifiedFingerprint(identity,now);
-            browserIdentity=identity;
-            engine.observe("YouTube",identity,ProbeStore.counter.committedAt(),now,System.currentTimeMillis());
-            if(ProbeStore.counter.accepted!=before)ProbeStore.transition(now+" ACCEPTED_TRANSITION #"+ProbeStore.counter.accepted);
+            boolean title="player-title".equals(mode);
+            ProbeStore.status=title?ProbeStore.counter.observe(identity,now,true,
+                    browserIdentity==null || (browserMovementAt>0 && now-browserMovementAt<=2500))
+                    :ProbeStore.counter.verifiedFingerprint(identity,now);
+            if(ProbeStore.counter.isCommitted(identity)) {
+                browserIdentity=identity;browserMode=mode;
+                engine.observe("YouTube",identity,ProbeStore.counter.committedAt(),now,System.currentTimeMillis());
+                indicatorReady=true;
+            } else {engine.pause(now);hideIndicator();}
+            if(ProbeStore.counter.accepted!=before)ProbeStore.transition(now+" BROWSER_ACCEPTED_TRANSITION #"+ProbeStore.counter.accepted);
             maintain(false);
+            queueBrowser(500);
             return;
         }
-        // Editing or a half-loaded window is a pause, not an exit.
+        engine.pause(now);hideIndicator();ProbeStore.counter.suspend();
         if(state==BrowserSignals.EDITING || state==BrowserSignals.UNAVAILABLE) {
-            engine.pause(now);
+            ProbeStore.status=state==BrowserSignals.EDITING?"Browser address is being edited — paused":"Browser address unavailable — paused";
+            if(state==BrowserSignals.UNAVAILABLE && browserRetries++<3)queueBrowser(700);
             return;
         }
-        if(browserIdentity!=null) {
-            engine.close(now,System.currentTimeMillis());
-            ProbeStore.counter.forgetFingerprints();
-            browserIdentity=null;
-            hideIndicator();
+        if(state==BrowserSignals.YOUTUBE_HOST_ONLY) {
+            // A trimmed toolbar is ambiguous; preserve the last identity while timing is paused.
+            ProbeStore.status="YouTube domain visible, but no accessible Shorts player identity";
+            if(browserRetries++<3)queueBrowser(700);
+            return;
         }
+        if(browserIdentity!=null)engine.close(now,System.currentTimeMillis());
+        ProbeStore.counter.forgetFingerprints();
+        browserIdentity=null;browserMode="none";
         ProbeStore.status=state==BrowserSignals.YOUTUBE_HOST_ONLY
-                ?"Browser shows only the domain — cannot see which Short is playing"
-                :"Waiting for Reels or Shorts";
+                ?"YouTube domain visible, but no accessible Shorts player identity"
+                :"Waiting for browser YouTube Shorts";
+    }
+    private void queueBrowser(long delay) {
+        if(browserQueued || browserPkg==null || destroyed || !trackingAllowed())return;
+        browserQueued=true;handler.postDelayed(browserTask,delay);
     }
     private void inspectWindow(String eventPackage) {
         final long epoch=readEpoch;
@@ -948,7 +972,8 @@ public final class ProbeService extends AccessibilityService {
         CountingEngine.Live live=engine==null?null:engine.live(SystemClock.elapsedRealtime());
         if(live!=null && live.paused) { indicator.hide(); return; }
         ShortVideoDetector detector=Detectors.forPackage(ProbeStore.target);
-        if(detector==null) { indicator.hide(); return; }
+        if(detector==null && !(browserPkg!=null && browserIdentity!=null
+                && browserPkg.equals(ProbeStore.target))) { indicator.hide(); return; }
         long day=DailyBadge.start(System.currentTimeMillis()),end=DailyBadge.end(day);
         long itemStart=live==null?-1:live.startedAt;
         String session=live==null?"":live.sessionId;

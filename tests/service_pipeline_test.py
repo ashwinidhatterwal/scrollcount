@@ -27,7 +27,7 @@ doubles = {
  }''',
  'android/view/accessibility/AccessibilityNodeInfo.java': '''package android.view.accessibility;
  public class AccessibilityNodeInfo {
- public String id="",label="",type="android.widget.TextView",pkg="com.instagram.android"; public boolean visible=true,editable,password,focused,scrollable,clickable;
+ public String description=""; public String id="",label="",type="android.widget.TextView",pkg="com.instagram.android"; public boolean visible=true,editable,password,focused,scrollable,clickable;
  public long labelDelay;
  public AccessibilityNodeInfo[] children=new AccessibilityNodeInfo[0];
  public AccessibilityNodeInfo parent;
@@ -40,7 +40,11 @@ doubles = {
  public CharSequence getPackageName(){return pkg;}
  public boolean isScrollable(){return scrollable;} public boolean isSelected(){return false;} public boolean isClickable(){return clickable;}
  public String getViewIdResourceName(){return id;} public CharSequence getText(){reads++;android.os.SystemClock.now+=labelDelay;return label;}
- public CharSequence getContentDescription(){return null;} public int getChildCount(){return children.length;}
+ public CharSequence getContentDescription(){return description;}
+ public java.util.List<AccessibilityNodeInfo> findAccessibilityNodeInfosByViewId(String wanted){
+ java.util.List<AccessibilityNodeInfo> out=new java.util.ArrayList<>();if(id.equals(wanted))out.add(this);
+ for(AccessibilityNodeInfo child:children)out.addAll(child.findAccessibilityNodeInfosByViewId(wanted));return out;}
+ public int getChildCount(){return children.length;}
  public AccessibilityNodeInfo getChild(int i){return children[i];} public void recycle(){}
  }''',
  'android/view/accessibility/AccessibilityEvent.java': '''package android.view.accessibility;

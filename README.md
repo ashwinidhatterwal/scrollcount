@@ -1,4 +1,4 @@
-Current update: **1.2.5 (version code 23)**. Home-screen, app-drawer and application icons all use the density-specific PNG launcher asset for compatibility. Counting/sharing code is unchanged. Rebuild and publish the new AAB with your existing upload key.
+Current update: **1.2.22 (version code 40)** — browser YouTube Shorts detection and badge fixes. See [CHANGES-1.2.22.md](CHANGES-1.2.22.md) for validation and phone-test instructions. Build with your existing signing key to install as an update.
 
 Public support/privacy contact is configured as **ashwinidhatterwal@gmail.com** in this package. App/backend metadata and the static privacy page have been regenerated. Backend deployment is still required. Contact configuration commands below apply if you change the address later.
 

@@ -30,13 +30,19 @@ final class BrowserSignals {
     static final int SHORTS = 5;
 
     /** package, address-bar view id. Chrome's id is widely used; the others follow the same pattern or are best-effort. */
-    private static final String[][] BROWSERS = {
+    static final String[][] BROWSERS = {
         {"com.android.chrome", "com.android.chrome:id/url_bar"},
+        {"com.chrome.dev", "com.chrome.dev:id/url_bar"},
+        {"com.chrome.canary", "com.chrome.canary:id/url_bar"},
         {"com.chrome.beta", "com.chrome.beta:id/url_bar"},
         {"com.brave.browser", "com.brave.browser:id/url_bar"},
         {"com.microsoft.emmx", "com.microsoft.emmx:id/url_bar"},
         {"com.vivaldi.browser", "com.vivaldi.browser:id/url_bar"},
         {"com.sec.android.app.sbrowser", "com.sec.android.app.sbrowser:id/location_bar_edit_text"},
+        {"com.opera.browser", "com.opera.browser:id/url_field"},
+        {"com.opera.mini.native", "com.opera.mini.native:id/url_field"},
+        {"com.vivo.browser", "com.vivo.browser:id/url_bar"},
+        {"com.vivo.browser", "com.vivo.browser:id/url"},
         {"org.mozilla.firefox", "org.mozilla.firefox:id/mozac_browser_toolbar_url_view"},
     };
 
@@ -48,6 +54,16 @@ final class BrowserSignals {
         if (pkg == null) return null;
         for (String[] browser : BROWSERS) if (browser[0].equals(pkg)) return browser[1];
         return null;
+    }
+
+    static String[] urlBarIds(String pkg) {
+        java.util.ArrayList<String> ids=new java.util.ArrayList<>();
+        for(String[] browser:BROWSERS)if(browser[0].equals(pkg))ids.add(browser[1]);
+        // Read-only and edit-mode toolbar variants used by Chromium/Gecko releases.
+        if(!ids.isEmpty())for(String name:new String[]{"url_bar","url_bar_text","location_bar_edit_text","mozac_browser_toolbar_url_view","mozac_browser_toolbar_edit_url_view"}) {
+            String id=pkg+":id/"+name;if(!ids.contains(id))ids.add(id);
+        }
+        return ids.toArray(new String[0]);
     }
 
     static boolean browser(String pkg) {

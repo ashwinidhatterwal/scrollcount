@@ -605,13 +605,85 @@ public final class ServicePipelineTest {
         Object panel=observedSnapchatFrame(s,"Test caption C",false,true,16000);
         check(!(Boolean)get(get(panel,"snapshot"),"snapchatConfirmed")&&(Integer)get(get(panel,"snapshot"),"fields")==0,"editable panels block both confirmation and content reads");
     }
+    static android.view.accessibility.AccessibilityNodeInfo browserNode(String id,String label,Object...kids)throws Exception {
+        Object n=node(id,label,true,kids);set(n,"pkg","com.android.chrome");
+        return (android.view.accessibility.AccessibilityNodeInfo)n;
+    }
+    static void browserReaderGuards()throws Exception {
+        android.view.accessibility.AccessibilityNodeInfo bar=browserNode("com.android.chrome:id/url_bar","m.youtube.com");
+        set(bar,"description","https://m.youtube.com/shorts/dQw4w9WgXcQ");
+        android.view.accessibility.AccessibilityNodeInfo root=browserNode("","",bar);
+        BrowserReader.Result reading=BrowserReader.read(root,"com.android.chrome",new byte[32]);
+        check(reading.state==BrowserSignals.SHORTS && reading.mode.equals("url"),"full URL in toolbar description recovers trimmed display");
+        set(bar,"focused",true);
+        check(BrowserReader.read(root,"com.android.chrome",new byte[32]).state==BrowserSignals.SHORTS,"focused read-only toolbar is not an editing field");
+        set(bar,"editable",true);set(bar,"reads",0);
+        reading=BrowserReader.read(root,"com.android.chrome",new byte[32]);
+        check(reading.state==BrowserSignals.EDITING && (Integer)get(bar,"reads")==0,"typed address is never inspected");
+        set(bar,"editable",false);set(bar,"focused",false);set(bar,"description","");
+        android.view.accessibility.AccessibilityNodeInfo title=browserNode("video-title","Synthetic title A");
+        android.view.accessibility.AccessibilityNodeInfo player=browserNode("reel-video-renderer","",title);
+        android.view.accessibility.AccessibilityNodeInfo web=browserNode("","",player);set(web,"type","android.webkit.WebView");
+        root=browserNode("","",bar,web);
+        reading=BrowserReader.read(root,"com.android.chrome",new byte[32]);
+        check(reading.state==BrowserSignals.SHORTS && reading.mode.equals("player-title") && !reading.identity.contains("Synthetic"),"YouTube domain plus actual reel subtree yields hashed identity");
+        set(player,"id","shorts-tab");set(title,"reads",0);
+        check(BrowserReader.read(root,"com.android.chrome",new byte[32]).identity==null && (Integer)get(title,"reads")==0,"a Shorts navigation tab cannot confirm a player or authorize label reads");
+        set(player,"id","reel-video-renderer");set(bar,"label","example.com");set(title,"reads",0);
+        check(BrowserReader.read(root,"com.android.chrome",new byte[32]).state==BrowserSignals.OTHER_SITE && (Integer)get(title,"reads")==0,"unrelated page content is never read");
+        set(bar,"label","youtube.com/watch?v=dQw4w9WgXcQ");
+        check(BrowserReader.read(root,"com.android.chrome",new byte[32]).identity==null,"regular YouTube watch pages remain excluded");
+        set(bar,"label","youtube.com");set(title,"editable",true);set(title,"reads",0);
+        check(BrowserReader.read(root,"com.android.chrome",new byte[32]).identity==null && (Integer)get(title,"reads")==0,"editable player fields are excluded");
+    }
+    static void browserCountingPipeline()throws Exception {
+        Sink sink=new Sink();ProbeService s=service("com.android.chrome",sink);
+        set(s,"browserPkg","com.android.chrome");
+        Class<?>[] types={long.class,int.class,String.class,String.class};
+        time(10000);call(s,"applyBrowser",types,0L,BrowserSignals.SHORTS,"web:A","url");
+        check(sink.detected==1 && (Boolean)get(s,"indicatorReady"),"browser baseline counts and enables badge");
+        time(11000);call(s,"applyBrowser",types,0L,BrowserSignals.SHORTS,"web:A","url");
+        check(sink.detected==1,"unchanged URL cannot count twice");
+        time(12000);call(s,"applyBrowser",types,0L,BrowserSignals.SHORTS,"web:B","url");
+        check(sink.detected==2 && ProbeStore.counter.accepted==1,"exact Shorts URL transition counts once");
+        time(13000);call(s,"applyBrowser",types,0L,BrowserSignals.SHORTS,"title:B","player-title");
+        check(sink.detected==2,"switching URL to title source aliases the live item");
+        time(14000);call(s,"applyBrowser",types,0L,BrowserSignals.SHORTS,"title:C","player-title");
+        time(15000);call(s,"applyBrowser",types,0L,BrowserSignals.SHORTS,"title:C","player-title");
+        check(sink.detected==2,"title edits without a fresh swipe cannot count");
+        set(s,"browserMovementAt",16000L);
+        time(16000);call(s,"applyBrowser",types,0L,BrowserSignals.SHORTS,"title:D","player-title");
+        time(16700);call(s,"applyBrowser",types,0L,BrowserSignals.SHORTS,"title:D","player-title");
+        check(sink.detected==3,"stable title after verified browser scroll counts once");
+        time(18000);call(s,"applyBrowser",types,0L,BrowserSignals.EDITING,null,"none");
+        check(!(Boolean)get(s,"indicatorReady") && ((CountingEngine)get(s,"engine")).live(18000).paused,"typing pauses timing and hides badge");
+        call(s,"invalidateReads",new Class<?>[]{});
+        time(19000);call(s,"applyBrowser",types,0L,BrowserSignals.SHORTS,"web:stale","url");
+        check(sink.detected==3 && !(Boolean)get(s,"browserQueued"),"stale browser results and pending polls are invalidated");
+    }
+    static void browserReadPipeline()throws Exception {
+        Sink sink=new Sink();ProbeService s=service("",sink);
+        set(s,"reader",new ReadLane((java.util.concurrent.Executor)Runnable::run));
+        ProbeStore.setDiagnostics(true,false);
+        android.view.accessibility.AccessibilityNodeInfo bar=browserNode("com.android.chrome:id/url_bar","youtube.com/shorts/dQw4w9WgXcQ");
+        android.view.accessibility.AccessibilityNodeInfo root=browserNode("","",bar);
+        Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,root);
+        android.view.accessibility.AccessibilityEvent event=new android.view.accessibility.AccessibilityEvent();
+        set(event,"pkg","com.android.chrome");set(event,"eventType",32);
+        s.onAccessibilityEvent(event);pump(s,10000);
+        check(ProbeStore.events==1 && ProbeStore.scans>=1 && ProbeStore.target.equals("com.android.chrome") && sink.detected==1,"real browser event/read/result paths populate diagnostics and count");
+        set(bar,"label","youtube.com/shorts/ab_-123XYZ9");pump(s,10600);
+        check(sink.detected==2,"active polling observes URL changes without a second accessibility event");
+        set(event,"pkg","in.scrollcount.probe");s.onAccessibilityEvent(event);pump(s,12000);
+        check(!(Boolean)get(s,"browserQueued") && get(s,"browserPkg")==null,"app switch stops browser polling");
+    }
     public static void main(String[] args)throws Exception {
         snapshot=Class.forName("in.scrollcount.probe.ProbeService$Snapshot");result=Class.forName("in.scrollcount.probe.ProbeService$ScanResult");
         int failures=0;
-        for(String name:new String[]{"observedSnapchatPipeline","snapchatPipeline","facebookPipeline","missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels","siblingSheetPipeline","sourceBehindSlowTree"})try {
+        for(String name:new String[]{"browserReaderGuards","browserCountingPipeline","browserReadPipeline","observedSnapchatPipeline","snapchatPipeline","facebookPipeline","missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels","siblingSheetPipeline","sourceBehindSlowTree"})try {
             Method test=ServicePipelineTest.class.getDeclaredMethod(name);test.invoke(null);
         }catch(InvocationTargetException e){failures++;System.err.println(name+": "+e.getCause());e.getCause().printStackTrace();}
         check(failures==0,"service pipeline regressions: "+failures);
-        System.out.println("PASS: 24 service cases with supplied Snapchat 14.29 structural replay with unindexed Snapchat Spotlight and content-free metadata including redacted-ID Facebook snapshot/source/counting guards, modern/legacy/overlay/sibling-sheet layouts and 40 rapid indexed events during a blocked tree read (340 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
+        System.out.println("PASS: 27 service cases (including browser URL/title/privacy/lifecycle regressions) with supplied Snapchat 14.29 structural replay with unindexed Snapchat Spotlight and content-free metadata including redacted-ID Facebook snapshot/source/counting guards, modern/legacy/overlay/sibling-sheet layouts and 40 rapid indexed events during a blocked tree read (340 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
     }
 }
