@@ -9,7 +9,18 @@ final class SnapchatSignals {
     static boolean favorite(String value){String s=label(value);return s.contains("favorite")||s.contains("favourite")||s.equals("like")||s.equals("unlike")||s.contains("पसंद");}
     static boolean movement(String type){return type!=null && (type.endsWith("RecyclerView")||type.endsWith("ViewPager")||type.endsWith("ViewPager2")||type.equals("android.widget.FrameLayout"));}
     static boolean footer(int left,int top,int right,int bottom,int width,int height){
-        return width>0&&height>0&&left>=0&&right>left&&right<=width*3L/4&&top>=height/2&&bottom>top&&bottom<=height*9L/10;
+        return width>0&&height>0&&left>=0&&right>left&&right<=width*87L/100&&top>=height/2&&bottom>top&&bottom<=height*92L/100;
+    }
+    static boolean actionRow(int left,int top,int right,int bottom,int width,int height){
+        return width>0&&height>0&&left>=width*4L/5&&right<=width&&right>left&&right-left<=width/5
+                &&top>=height/3&&bottom<=height*92L/100&&bottom-top>=height/25&&bottom-top<=height/7;
+    }
+    static boolean rail(int left,int top,int right,int bottom,int width,int height){
+        return width>0&&height>0&&left>=width*4L/5&&right<=width&&right>left&&right-left<=width/5
+                &&top>=height/3&&bottom<=height*92L/100&&bottom-top>=height/3;
+    }
+    static boolean author(int left,int top,int right,int bottom,int width,int height){
+        return footer(left,top,right,bottom,width,height)&&left<width/5&&right-left<=width*3L/5&&top>=height*65L/100;
     }
     static boolean content(String raw){
         String s=label(raw);

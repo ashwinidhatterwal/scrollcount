@@ -165,6 +165,11 @@ public final class ProbeService extends AccessibilityService {
     }
     private boolean queued;
     private long generation;
+    // Browser Shorts (youtube.com/shorts in a mobile browser). Only a salted hash of the id is kept.
+    private String browserPkg,browserIdentity;
+    private boolean browserQueued;
+    private long browserReadAt;
+    private final Runnable browserTask=()->guard("browser read",this::readBrowser);
     private int verification;
     private boolean expandedRecovery;
     private int unavailableRetries;
@@ -233,6 +238,8 @@ public final class ProbeService extends AccessibilityService {
         // or schedule another scan; opening the actual ScrollCount activity still closes it.
         if(indicator!=null && (pkg.equals(getPackageName()) || event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED)
                 && indicator.ownsWindow(event.getWindowId()))return;
+        // Browsers host arbitrary sites; they get their own address-bar-gated path (see browserEvent).
+        if(BrowserSignals.browser(pkg)) { browserEvent(event,pkg); return; }
         ShortVideoDetector detector=Detectors.forPackage(pkg);
         if(detector==null) {
             if(event.getEventType()!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.getEventType()!=AccessibilityEvent.TYPE_WINDOWS_CHANGED)return;
@@ -286,6 +293,96 @@ public final class ProbeService extends AccessibilityService {
         // Content-change storms are sampled, not scanned at every progress update.
         schedule(scroll ? 180 : 800);
         maintain(false);
+    }
+    private void browserEvent(AccessibilityEvent event,String pkg) {
+        int type=event.getEventType();
+        if(type!=AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && type!=AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                && type!=AccessibilityEvent.TYPE_VIEW_SCROLLED && type!=AccessibilityEvent.TYPE_VIEW_CLICKED)return;
+        if(!ProbeStore.target.isEmpty()) {
+            // Coming from a supported app: close its session first, as stopForReset does.
+            invalidateReads();
+            engine.close(SystemClock.elapsedRealtime(),System.currentTimeMillis());
+            hideIndicator();
+            handler.removeCallbacks(scanTask);
+            handler.removeCallbacks(quickTask);
+            queued=quickQueued=false;
+            youtubeFast.reset();
+            instagramConfirmedAt=youtubeConfirmedAt=lastPagerAt=0;
+            ProbeStore.reset("");
+            applyProfile();
+        }
+        browserPkg=pkg;
+        if(type==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED)invalidateReads();
+        if(browserQueued)return;
+        browserQueued=true;
+        // Ordinary pages are sampled slowly; a Shorts session is sampled quickly enough to catch swipes.
+        long gap=browserIdentity!=null?250:900;
+        handler.postDelayed(browserTask,Math.max(0,gap-(SystemClock.elapsedRealtime()-browserReadAt)));
+    }
+    /** Reads only the address bar. No page content is touched unless the bar says youtube.com/shorts/. */
+    private void readBrowser() {
+        browserQueued=false;
+        final String pkg=browserPkg;
+        if(pkg==null || destroyed || !trackingAllowed())return;
+        browserReadAt=SystemClock.elapsedRealtime();
+        final long epoch=readEpoch;
+        final String barId=BrowserSignals.urlBarId(pkg);
+        submitRead("browser",epoch,()-> {
+            int state=BrowserSignals.UNAVAILABLE;
+            String identity=null;
+            AccessibilityNodeInfo root=null;
+            try {
+                root=getRootInActiveWindow();
+                if(root!=null && pkg.equals(String.valueOf(root.getPackageName()))) {
+                    java.util.List<AccessibilityNodeInfo> bars=root.findAccessibilityNodeInfosByViewId(barId);
+                    try {
+                        for(AccessibilityNodeInfo bar:bars) {
+                            // Never read the bar while the user may be typing in it.
+                            if(bar.isFocused() || bar.isPassword()) { state=BrowserSignals.EDITING; break; }
+                            BrowserSignals.Reading reading=BrowserSignals.parse(bar.getText());
+                            state=reading.state;
+                            if(reading.shortId!=null)identity=BrowserSignals.identity(ProbeStore.salt.clone(),reading.shortId);
+                            break;
+                        }
+                    }
+                    finally { for(AccessibilityNodeInfo bar:bars)bar.recycle(); }
+                }
+            }
+            catch(RuntimeException error) { ServiceHealth.failure("browser address bar",error); }
+            finally { if(root!=null)root.recycle(); }
+            final int resultState=state;
+            final String resultIdentity=identity;
+            handler.post(()->guard("browser result",()->applyBrowser(epoch,resultState,resultIdentity)));
+        },()->{});
+    }
+    private void applyBrowser(long epoch,int state,String identity) {
+        if(epoch!=readEpoch || destroyed || !trackingAllowed())return;
+        long now=SystemClock.elapsedRealtime();
+        if(state==BrowserSignals.SHORTS && identity!=null) {
+            // A different app may have used the shared counter since our last Short: start a fresh baseline.
+            if(!ProbeStore.counter.isCommitted(browserIdentity))ProbeStore.counter.forgetFingerprints();
+            int before=ProbeStore.counter.accepted;
+            ProbeStore.status=ProbeStore.counter.verifiedFingerprint(identity,now);
+            browserIdentity=identity;
+            engine.observe("YouTube",identity,ProbeStore.counter.committedAt(),now,System.currentTimeMillis());
+            if(ProbeStore.counter.accepted!=before)ProbeStore.transition(now+" ACCEPTED_TRANSITION #"+ProbeStore.counter.accepted);
+            maintain(false);
+            return;
+        }
+        // Editing or a half-loaded window is a pause, not an exit.
+        if(state==BrowserSignals.EDITING || state==BrowserSignals.UNAVAILABLE) {
+            engine.pause(now);
+            return;
+        }
+        if(browserIdentity!=null) {
+            engine.close(now,System.currentTimeMillis());
+            ProbeStore.counter.forgetFingerprints();
+            browserIdentity=null;
+            hideIndicator();
+        }
+        ProbeStore.status=state==BrowserSignals.YOUTUBE_HOST_ONLY
+                ?"Browser shows only the domain — cannot see which Short is playing"
+                :"Waiting for Reels or Shorts";
     }
     private void inspectWindow(String eventPackage) {
         final long epoch=readEpoch;
@@ -388,7 +485,9 @@ public final class ProbeService extends AccessibilityService {
         }
         if(id.isEmpty()) {
             ProbeStore.missingSources++;
-            ProbeStore.decision(now+" SOURCE_REJECTED reason=no_accessible_source");
+            if(detector.platformName().equals("Snapchat")&&SnapchatSignals.movement(type))
+                ProbeStore.decision(now+" SOURCE_METADATA_ONLY reason=no_view_id class_and_window_retained=true");
+            else ProbeStore.decision(now+" SOURCE_REJECTED reason=no_accessible_source");
         }
         if(scroll && Detectors.instagram(pkg) && id.isEmpty() && InstagramSignals.pagerClass(type) && eventWindow>=0) {
             // Missing source handles do not erase the event's class/window metadata.
@@ -520,8 +619,8 @@ public final class ProbeService extends AccessibilityService {
             else {
                 snapshot.walk(root,0);
                 if(Detectors.youtube(snapshot.pkg))snapshot.feed|=YouTubeSignals.confirmedContainer(snapshot.ytRecycler,snapshot.ytPage);
-                snapshot.snapchatConfirmed=snapshot.platform.equals("Snapchat") && snapshot.snapchatSpotlight
-                        && snapshot.snapchatPager && snapshot.snapchatFavorite && snapshot.snapchatPlayerWithFavorite && !snapshot.overlay;
+                snapshot.snapchatConfirmed=snapshot.platform.equals("Snapchat") && !snapshot.overlay && (snapshot.snapchatGeometryBounds!=null
+                        || (snapshot.snapchatSpotlight && snapshot.snapchatPager && snapshot.snapchatFavorite && snapshot.snapchatPlayerWithFavorite));
                 snapshot.feed|=snapshot.facebookPlayer||snapshot.snapchatConfirmed;
                 boolean structure=Detectors.youtube(snapshot.pkg)?snapshot.ytRecycler&&snapshot.ytPage:
                         Detectors.instagram(snapshot.pkg)?InstagramSignals.playerStructure(snapshot.igPager,snapshot.igVideo,snapshot.igFullVideo,snapshot.feed,snapshot.like,snapshot.share):snapshot.platform.equals("Snapchat")?snapshot.snapchatConfirmed:snapshot.feed&&snapshot.like&&snapshot.share;
@@ -612,7 +711,7 @@ public final class ProbeService extends AccessibilityService {
         long screenArea=(long)getResources().getDisplayMetrics().widthPixels*getResources().getDisplayMetrics().heightPixels;
         long score=(screenArea>0 ? Math.min(1000000,area*1000000/screenArea) : 0)+s.nodes;
         ProbeStore.retainTree(s.structure.toString(),snapshotInfo,score,s.feed);
-        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", instagramFullVideo="+s.igFullVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+", overlayReasons="+s.overlayReasons+", sheetCandidates="+s.sheetCandidates+ ", snapchatSpotlight="+s.snapchatSpotlight+", snapchatPager="+s.snapchatPager+", snapchatFavorite="+s.snapchatFavorite+", snapchatConfirmed="+s.snapchatConfirmed+", facebookPlayer="+s.facebookPlayer+", facebookIndex="+s.facebookIndex+", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
+        ProbeStore.signals="rootBounds="+rootBounds.flattenToString()+", youtubeRecycler="+s.ytRecycler+", youtubePage="+s.ytPage+", feedMarker="+s.feed+", instagramPager="+s.igPager+", instagramVideo="+s.igVideo+", instagramFullVideo="+s.igFullVideo+", like="+s.like+", share="+s.share+", overlay="+s.overlay+", overlayReasons="+s.overlayReasons+", sheetCandidates="+s.sheetCandidates+ ", snapchatGeometry="+(s.snapchatGeometryBounds!=null)+", snapchatRails="+s.snapchatRails+", snapchatAuthors="+s.snapchatAuthors+", snapchatFooterLeaves="+s.snapchatFooters+", snapchatSpotlight="+s.snapchatSpotlight+", snapchatPager="+s.snapchatPager+", snapchatFavorite="+s.snapchatFavorite+", snapchatConfirmed="+s.snapchatConfirmed+", facebookPlayer="+s.facebookPlayer+", facebookIndex="+s.facebookIndex+", captionFields="+s.captionFields+", pagerIndex="+pagerIndex+", effectiveIndex="+position+", labelIdentity="+instagramIdentity.labels()+", lastScrollSource="+sourceSummary+", contentFields="+s.fields+", nodes="+s.nodes+", truncated="+s.cut;
         boolean fullPlayer=FeedEvidence.fullPlayer(rootBounds.width(),rootBounds.height(),getResources().getDisplayMetrics().widthPixels,getResources().getDisplayMetrics().heightPixels);
         if(instagramFrame && instagramPendingAt>=0) {
             long now=SystemClock.elapsedRealtime();
@@ -934,6 +1033,9 @@ public final class ProbeService extends AccessibilityService {
         long facebookAt;
         boolean facebookPlayer;
         boolean snapchatSpotlight,snapchatPager,snapchatFavorite,snapchatConfirmed,snapchatPlayerWithFavorite;
+        Rect snapchatGeometryBounds;
+        int snapchatImages,snapchatAuthors,snapchatFooters,snapchatRails,snapchatBackdrops;
+        final java.util.List<Rect> snapchatRows=new java.util.ArrayList<>();
         final java.util.List<Rect> snapchatFavorites=new java.util.ArrayList<>();
         final StringBuilder snapchatLayout=new StringBuilder();
         final java.util.List<Rect> facebookLikes=new java.util.ArrayList<>(),facebookShares=new java.util.ArrayList<>();
@@ -1005,6 +1107,8 @@ public final class ProbeService extends AccessibilityService {
             }
             boolean snapchat=platform.equals("Snapchat");
             int snapchatFavoritesBefore=snapchatFavorites.size();
+            int snapRowsBefore=snapchatRows.size(),snapImagesBefore=snapchatImages,snapAuthorsBefore=snapchatAuthors,
+                    snapFootersBefore=snapchatFooters,snapRailsBefore=snapchatRails,snapBackdropsBefore=snapchatBackdrops;
             int facebookLikesBefore=facebookLikes.size(),facebookSharesBefore=facebookShares.size();
             boolean control=type.endsWith("Button") || type.endsWith("ImageView") || n.isSelected() || n.isClickable();
             Rect nodeBounds=new Rect();n.getBoundsInScreen(nodeBounds);
@@ -1018,6 +1122,13 @@ public final class ProbeService extends AccessibilityService {
             String desc=control?String.valueOf(rawDesc).toLowerCase(Locale.ROOT):"";
             String controls=lowerId+" "+text+" "+desc;
             if(snapchat){
+                if(type.endsWith("ImageView") && nodeBounds.left>=screenWidth*4L/5)snapchatImages++;
+                if(type.endsWith("TextView") && n.getChildCount()==0
+                        && SnapchatSignals.footer(nodeBounds.left,nodeBounds.top,nodeBounds.right,nodeBounds.bottom,screenWidth,screenHeight)){
+                    snapchatFooters++;
+                    if(n.isClickable()&&SnapchatSignals.author(nodeBounds.left,nodeBounds.top,nodeBounds.right,nodeBounds.bottom,screenWidth,screenHeight))snapchatAuthors++;
+                }
+                if(n.getChildCount()==0 && (type.equals("android.widget.FrameLayout")||type.equals("android.view.View"))&&visiblePlayerBounds(nodeBounds))snapchatBackdrops++;
                 // Read only to recognise fixed UI vocabulary; never export these labels.
                 String st=String.valueOf(rawText),sd=String.valueOf(rawDesc);
                 snapchatSpotlight|=SnapchatSignals.spotlight(st,n.isSelected(),n.isClickable(),nodeBounds.top,screenHeight)
@@ -1033,7 +1144,7 @@ public final class ProbeService extends AccessibilityService {
                 if(ProbeStore.enabled && snapchatLayout.length()<24000){
                     snapchatLayout.append("depth=").append(depth).append(" type=").append(type).append(" bounds=").append(nodeBounds.flattenToString())
                             .append(" selected=").append(n.isSelected()).append(" clickable=").append(n.isClickable()).append(" scrollable=").append(n.isScrollable())
-                            .append(" children=").append(n.getChildCount()).append(" textPresent=").append(rawText!=null)
+                            .append(" children=").append(n.getChildCount()).append(" labelsSampled=").append(readControl).append(" textPresent=").append(rawText!=null)
                             .append(" descriptionPresent=").append(rawDesc!=null).append(" spotlight=")
                             .append(SnapchatSignals.label(st).equals("spotlight")||SnapchatSignals.label(sd).equals("spotlight"))
                             .append(" favorite=").append(favorite).append(" pager=").append(pager).append('\n');
@@ -1076,6 +1187,23 @@ public final class ProbeService extends AccessibilityService {
                     finally {
                         child.recycle();
                     }
+                }
+            }
+            if(snapchat){
+                if(type.equals("android.view.ViewGroup") && n.isClickable() && n.getChildCount()>=2 && snapchatImages>snapImagesBefore
+                        && SnapchatSignals.actionRow(nodeBounds.left,nodeBounds.top,nodeBounds.right,nodeBounds.bottom,screenWidth,screenHeight))snapchatRows.add(new Rect(nodeBounds));
+                if(type.equals("android.widget.LinearLayout") && SnapchatSignals.rail(nodeBounds.left,nodeBounds.top,nodeBounds.right,nodeBounds.bottom,screenWidth,screenHeight)){
+                    java.util.TreeSet<Integer> tops=new java.util.TreeSet<>();
+                    for(int i=snapRowsBefore;i<snapchatRows.size();i++)tops.add(snapchatRows.get(i).top);
+                    int distinct=0,last=-screenHeight;for(int top:tops)if(top-last>=screenHeight/25){distinct++;last=top;}
+                    if(distinct>=4)snapchatRails++;
+                }
+                // Snapchat 14.29's observed non-scrollable ViewGroup: video backdrop,
+                // lower-left author/text and a tall rail with >=4 distinct action rows.
+                if(type.equals("android.view.ViewGroup")&&visiblePlayerBounds(nodeBounds)
+                        &&snapchatRails>snapRailsBefore&&snapchatAuthors>snapAuthorsBefore
+                        &&snapchatFooters-snapFootersBefore>=2&&snapchatBackdrops>snapBackdropsBefore){
+                    if(snapchatGeometryBounds==null || (long)nodeBounds.width()*nodeBounds.height()<(long)snapchatGeometryBounds.width()*snapchatGeometryBounds.height())snapchatGeometryBounds=new Rect(nodeBounds);
                 }
             }
             if(snapchat && (FacebookSignals.recycler(type)||InstagramSignals.pagerClass(type)||n.isScrollable()) && visiblePlayerBounds(nodeBounds)) {
@@ -1123,10 +1251,13 @@ public final class ProbeService extends AccessibilityService {
             String type=String.valueOf(n.getClassName());
             if(n.isPassword()||n.isEditable()||type.contains("EditText"))return;
             Rect bounds=new Rect();n.getBoundsInScreen(bounds);
-            inPlayer|=(FacebookSignals.recycler(type)||InstagramSignals.pagerClass(type)||n.isScrollable())&&visiblePlayerBounds(bounds);
+            inPlayer|=((FacebookSignals.recycler(type)||InstagramSignals.pagerClass(type)||n.isScrollable())&&visiblePlayerBounds(bounds))
+                    || (snapchatGeometryBounds!=null && type.equals("android.view.ViewGroup") && bounds.left==snapchatGeometryBounds.left
+                        &&bounds.top==snapchatGeometryBounds.top&&bounds.right==snapchatGeometryBounds.right&&bounds.bottom==snapchatGeometryBounds.bottom);
             if(inPlayer && n.isVisibleToUser() && n.getChildCount()==0 && type.endsWith("TextView")
                     && SnapchatSignals.footer(bounds.left,bounds.top,bounds.right,bounds.bottom,screenWidth,screenHeight)){
-                String value=n.getText()==null?"":n.getText().toString().trim();
+                CharSequence raw=n.getText();if(raw==null||raw.toString().trim().isEmpty())raw=n.getContentDescription();
+                String value=raw==null?"":raw.toString().trim();
                 if(SnapchatSignals.content(value)){socialLabels.add(value);fields++;captionFields++;}
             }
             for(int i=0;i<n.getChildCount();i++){

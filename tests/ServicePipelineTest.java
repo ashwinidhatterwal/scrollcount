@@ -557,13 +557,61 @@ public final class ServicePipelineTest {
         String report=ProbeStore.report();check(report.contains("Snapchat layout metadata")&&!report.contains("Creator"),"release export includes content-free metadata");
         ProbeStore.setDiagnostics(false,false);check(ProbeStore.snapchatLayout.isEmpty(),"disabling diagnostics clears Snapchat metadata");
     }
+    static Object observedSnapchatTree(String caption,boolean shrinkRail,boolean input)throws Exception {
+        java.util.List<Object> stack=new java.util.ArrayList<>(),nodes=new java.util.ArrayList<>();
+        java.util.List<Integer> depths=new java.util.ArrayList<>();
+        java.util.Map<Object,java.util.List<Object>> children=new java.util.IdentityHashMap<>();
+        java.util.regex.Pattern pattern=java.util.regex.Pattern.compile("depth=(\\d+) type=(\\S+) bounds=(-?\\d+) (-?\\d+) (-?\\d+) (-?\\d+) selected=(true|false) clickable=(true|false) scrollable=(true|false).* ");
+        Object root=null;int railRows=0;
+        for(String line:java.nio.file.Files.readAllLines(java.nio.file.Paths.get(System.getProperty("scrollcount.fixture")))){
+            java.util.regex.Matcher m=pattern.matcher(line+" ");if(!m.matches())throw new AssertionError("Bad fixture line");
+            int depth=Integer.parseInt(m.group(1)),left=Integer.parseInt(m.group(3)),top=Integer.parseInt(m.group(4)),right=Integer.parseInt(m.group(5)),bottom=Integer.parseInt(m.group(6));
+            boolean clickable=Boolean.parseBoolean(m.group(8));
+            String text=caption.isEmpty()?"":top==1945&&left==22?"Test creator":top==2112&&left==22?caption:top==2035&&left==66?"Test music":"";
+            Object n=node("com.snapchat.android:id/0_resource_name_obfuscated",text,true);
+            set(n,"pkg","com.snapchat.android");set(n,"type",m.group(2));set(n,"left",left);set(n,"top",top);set(n,"right",right);set(n,"bottom",bottom);set(n,"clickable",clickable);
+            if(shrinkRail&&m.group(2).equals("android.view.ViewGroup")&&clickable&&left>=900){railRows++;if(railRows>2)set(n,"clickable",false);}
+            nodes.add(n);children.put(n,new java.util.ArrayList<>());
+            while(!depths.isEmpty()&&depths.get(depths.size()-1)>=depth){depths.remove(depths.size()-1);stack.remove(stack.size()-1);}
+            if(stack.isEmpty()){if(root==null)root=n;}else children.get(stack.get(stack.size()-1)).add(n);
+            depths.add(depth);stack.add(n);
+        }
+        if(input){Object edit=node("","",true);set(edit,"editable",true);children.get(root).add(edit);}
+        for(Object n:nodes){java.util.List<Object> kids=children.get(n);android.view.accessibility.AccessibilityNodeInfo[] array=new android.view.accessibility.AccessibilityNodeInfo[kids.size()];for(int i=0;i<array.length;i++)array[i]=(android.view.accessibility.AccessibilityNodeInfo)kids.get(i);set(n,"children",array);}
+        return root;
+    }
+    static Object observedSnapchatFrame(ProbeService service,String caption,boolean shrinkRail,boolean input,long now)throws Exception{
+        time(now);Constructor<?> ctor=snapshot.getDeclaredConstructor(String.class,int.class,int.class);ctor.setAccessible(true);
+        Object snap=ctor.newInstance("com.snapchat.android",1080,2400);
+        Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,observedSnapchatTree(caption,shrinkRail,input));
+        return call(service,"readSnapshot",new Class<?>[]{snapshot,int.class,int.class,boolean.class},snap,-1,11,false);
+    }
+    static void observedSnapchatPipeline()throws Exception{
+        Sink sink=new Sink();ProbeService s=service("com.snapchat.android",sink);
+        Object exact=observedSnapchatFrame(s,"",false,false,10000),snap=get(exact,"snapshot");
+        check(!(Boolean)get(snap,"snapchatPager")&&!(Boolean)get(snap,"snapchatSpotlight"),"trace supplies no pager or Spotlight label");
+        check(get(snap,"snapchatGeometryBounds")!=null&&(Boolean)get(snap,"snapchatConfirmed"),"actual 14.29 non-scrollable layout is structurally recognised");
+        check((Integer)get(snap,"fields")==0,"geometry alone never invents content identity");
+        snapchatSource(s,11000);
+        call(s,"applyScan",new Class<?>[]{result},observedSnapchatFrame(s,"Test caption A",false,false,11100));
+        call(s,"applyScan",new Class<?>[]{result},observedSnapchatFrame(s,"Test caption A",false,false,12000));
+        check(sink.detected==1,"observed geometry with synthetic accessible footer establishes baseline");
+        snapchatSource(s,13000);
+        call(s,"applyScan",new Class<?>[]{result},observedSnapchatFrame(s,"Test caption B",false,false,13100));
+        call(s,"applyScan",new Class<?>[]{result},observedSnapchatFrame(s,"Test caption B",false,false,14000));
+        check(sink.detected==2&&ProbeStore.counter.accepted==1,"real geometry plus synthetic footer changes counts once");
+        Object sparse=observedSnapchatFrame(s,"Test caption C",true,false,15000);
+        check(!(Boolean)get(get(sparse,"snapshot"),"snapchatConfirmed"),"two action groups are insufficient for layout confirmation");
+        Object panel=observedSnapchatFrame(s,"Test caption C",false,true,16000);
+        check(!(Boolean)get(get(panel,"snapshot"),"snapchatConfirmed")&&(Integer)get(get(panel,"snapshot"),"fields")==0,"editable panels block both confirmation and content reads");
+    }
     public static void main(String[] args)throws Exception {
         snapshot=Class.forName("in.scrollcount.probe.ProbeService$Snapshot");result=Class.forName("in.scrollcount.probe.ProbeService$ScanResult");
         int failures=0;
-        for(String name:new String[]{"snapchatPipeline","facebookPipeline","missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels","siblingSheetPipeline","sourceBehindSlowTree"})try {
+        for(String name:new String[]{"observedSnapchatPipeline","snapchatPipeline","facebookPipeline","missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels","siblingSheetPipeline","sourceBehindSlowTree"})try {
             Method test=ServicePipelineTest.class.getDeclaredMethod(name);test.invoke(null);
         }catch(InvocationTargetException e){failures++;System.err.println(name+": "+e.getCause());e.getCause().printStackTrace();}
         check(failures==0,"service pipeline regressions: "+failures);
-        System.out.println("PASS: 23 service cases with unindexed Snapchat Spotlight and content-free metadata including redacted-ID Facebook snapshot/source/counting guards, modern/legacy/overlay/sibling-sheet layouts and 40 rapid indexed events during a blocked tree read (340 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
+        System.out.println("PASS: 24 service cases with supplied Snapchat 14.29 structural replay with unindexed Snapchat Spotlight and content-free metadata including redacted-ID Facebook snapshot/source/counting guards, modern/legacy/overlay/sibling-sheet layouts and 40 rapid indexed events during a blocked tree read (340 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
     }
 }

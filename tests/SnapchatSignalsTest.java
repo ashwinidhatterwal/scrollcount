@@ -14,6 +14,15 @@ public final class SnapchatSignalsTest {
         check(!SnapchatSignals.footer(900,1500,1040,1700,1080,2400));
         check(SnapchatSignals.content("Creator Alpha"));check(SnapchatSignals.content("An actual caption"));
         for(String label:new String[]{"123K","10:00","Subscribe","Send To","14 comments","3h","Spotlight","More"})check(!SnapchatSignals.content(label));
+        check(SnapchatSignals.actionRow(937,999,1069,1243,1080,2400));
+        check(SnapchatSignals.actionRow(943,1907,1066,2030,1080,2400));
+        check(!SnapchatSignals.actionRow(100,999,230,1243,1080,2400));
+        check(!SnapchatSignals.actionRow(943,1907,1066,1950,1080,2400));
+        check(SnapchatSignals.rail(937,999,1069,2179,1080,2400));
+        check(!SnapchatSignals.rail(937,1907,1069,2179,1080,2400));
+        check(SnapchatSignals.author(22,1945,289,2013,1080,2400));
+        check(SnapchatSignals.footer(22,2112,926,2168,1080,2400));
+        check(!SnapchatSignals.footer(0,2196,1080,2351,1080,2400));
         System.out.println("PASS: Snapchat explicit Spotlight proof, unindexed source classes, scoped footer and action/counter exclusions");
     }
 }
