@@ -4,10 +4,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 /**
- * Recognises YouTube Shorts opened in a mobile browser.
+ * Recognises YouTube Shorts, Instagram Reels and Facebook Reels opened in a mobile browser.
  *
  * Only the address-bar text is examined, in memory, and only to answer two questions: is this a
- * youtube.com/shorts/<id> page, and which id. The URL is never stored or logged; callers keep just
+ * supported short-video page, and its platform/video id. The URL is never stored or logged; callers keep just
  * a salted HMAC of the id, exactly like the in-app identities.
  *
  * Pure Java (no Android types) so it can be unit-tested off-device.
@@ -19,14 +19,14 @@ final class BrowserSignals {
     static final int EDITING = 1;
     /** Some other site. */
     static final int OTHER_SITE = 2;
-    /** A YouTube page that is not a Short (watch page, home, search...). */
+    /** A supported site page that is not an individual Short/Reel (legacy state name). */
     static final int YOUTUBE_OTHER = 3;
     /**
-     * Only "youtube.com" is visible. Some browsers trim the address bar to the domain, in which
+     * Only a supported domain is visible. Some browsers trim the address bar, in which
      * case a Short cannot be told apart from the home page.
      */
     static final int YOUTUBE_HOST_ONLY = 4;
-    /** youtube.com/shorts/<11-character id>. */
+    /** Individual YouTube Short, Instagram Reel or Facebook Reel; see Reading.platform. */
     static final int SHORTS = 5;
 
     /** package, address-bar view id. Chrome's id is widely used; the others follow the same pattern or are best-effort. */
@@ -74,45 +74,43 @@ final class BrowserSignals {
     static final class Reading {
         final int state;
         final String shortId;
+        final String platform;
 
         Reading(int state, String shortId) {
-            this.state = state;
-            this.shortId = shortId;
+            this(state,shortId,"YouTube");
+        }
+        Reading(int state,String shortId,String platform){
+            this.state=state;this.shortId=shortId;this.platform=platform;
         }
     }
 
+    static boolean platform(String value){return "YouTube".equals(value)||"Instagram".equals(value)||"Facebook".equals(value);}
     static Reading parse(CharSequence raw) {
-        if (raw == null) return new Reading(UNAVAILABLE, null);
-        String text = raw.toString().trim();
-        if (text.isEmpty()) return new Reading(UNAVAILABLE, null);
-        // Drop the scheme if present.
-        int scheme = text.indexOf("://");
-        if (scheme >= 0 && scheme <= 10) text = text.substring(scheme + 3);
-        // Anything with whitespace is a search query or label, not a URL.
-        for (int i = 0; i < text.length(); i++) if (Character.isWhitespace(text.charAt(i))) return new Reading(OTHER_SITE, null);
-        int slash = text.indexOf('/');
-        String host = slash < 0 ? text : text.substring(0, slash);
-        String rest = slash < 0 ? "" : text.substring(slash);
-        int at = host.lastIndexOf('@');
-        if (at >= 0) host = host.substring(at + 1);
-        int port = host.indexOf(':');
-        if (port >= 0) host = host.substring(0, port);
-        host = host.toLowerCase(Locale.ROOT);
-        if (!(host.equals("youtube.com") || host.equals("www.youtube.com") || host.equals("m.youtube.com")))
-            return new Reading(OTHER_SITE, null);
-        int cut = rest.length();
-        int query = rest.indexOf('?'), fragment = rest.indexOf('#');
-        if (query >= 0) cut = Math.min(cut, query);
-        if (fragment >= 0) cut = Math.min(cut, fragment);
-        String path = rest.substring(0, cut);
-        if (path.isEmpty() || path.equals("/")) return new Reading(YOUTUBE_HOST_ONLY, null);
-        if (path.startsWith("/shorts/")) {
-            String id = path.substring("/shorts/".length());
-            int end = id.indexOf('/');
-            if (end >= 0) id = id.substring(0, end);
-            if (validId(id)) return new Reading(SHORTS, id);
-        }
-        return new Reading(YOUTUBE_OTHER, null);
+        if(raw==null||raw.toString().trim().isEmpty())return new Reading(UNAVAILABLE,null,"");
+        String text=raw.toString().trim();
+        for(int i=0;i<text.length();i++)if(Character.isWhitespace(text.charAt(i)))return new Reading(OTHER_SITE,null,"");
+        try{
+            java.net.URI uri=new java.net.URI(text.contains("://")?text:"https://"+text);
+            if(!("https".equalsIgnoreCase(uri.getScheme())||"http".equalsIgnoreCase(uri.getScheme()))||uri.getRawUserInfo()!=null)
+                return new Reading(OTHER_SITE,null,"");
+            String host=uri.getHost();if(host==null)return new Reading(OTHER_SITE,null,"");host=host.toLowerCase(Locale.ROOT);
+            String platform=host.equals("youtube.com")||host.equals("www.youtube.com")||host.equals("m.youtube.com")?"YouTube":
+                    host.equals("instagram.com")||host.equals("www.instagram.com")?"Instagram":
+                    host.equals("facebook.com")||host.equals("www.facebook.com")||host.equals("m.facebook.com")||host.equals("web.facebook.com")?"Facebook":"";
+            if(platform.isEmpty())return new Reading(OTHER_SITE,null,"");
+            String path=uri.getRawPath();if(path==null||path.isEmpty()||path.equals("/"))return new Reading(YOUTUBE_HOST_ONLY,null,platform);
+            // Paths must identify exactly one short video; query and fragment never change identity.
+            String[] parts=path.split("/",-1);
+            if((parts.length==3||parts.length==4&&parts[3].isEmpty())&&parts[0].isEmpty()){
+                String kind=parts[1],id=parts[2];
+                boolean video=platform.equals("YouTube")?kind.equals("shorts")&&validId(id):
+                        platform.equals("Instagram")?(kind.equals("reel")||kind.equals("reels"))&&id.matches("[A-Za-z0-9_-]{5,64}")
+                            &&!id.matches("audio|saved|liked|create|following|explore|videos|for_you"):
+                        (kind.equals("reel")||kind.equals("reels"))&&id.matches("[0-9]{5,32}");
+                if(video)return new Reading(SHORTS,id,platform);
+            }
+            return new Reading(YOUTUBE_OTHER,null,platform);
+        }catch(java.net.URISyntaxException error){return new Reading(OTHER_SITE,null,"");}
     }
 
     private static boolean validId(String id) {
@@ -125,11 +123,13 @@ final class BrowserSignals {
     }
 
     /** Salted, one-way identity for a Short; the id itself never leaves this call. */
-    static String identity(byte[] salt, String shortId) {
+    static String identity(byte[] salt, String shortId) {return identity(salt,"YouTube",shortId);}
+    static String identity(byte[] salt,String platform,String shortId){
+        if(!platform(platform))throw new IllegalArgumentException("Unsupported platform");
         try {
             javax.crypto.Mac mac = javax.crypto.Mac.getInstance("HmacSHA256");
             mac.init(new javax.crypto.spec.SecretKeySpec(salt, "HmacSHA256"));
-            byte[] digest = mac.doFinal(("web-short\u0000" + shortId).getBytes(StandardCharsets.UTF_8));
+            byte[] digest = mac.doFinal(("web-short\u0000" + platform + "\u0000" + shortId).getBytes(StandardCharsets.UTF_8));
             StringBuilder out = new StringBuilder("web:");
             for (int i = 0; i < 12; i++) out.append(String.format(Locale.ROOT, "%02x", digest[i]));
             return out.toString();

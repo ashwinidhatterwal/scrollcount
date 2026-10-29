@@ -166,8 +166,8 @@ public final class ProbeService extends AccessibilityService {
     }
     private boolean queued;
     private long generation;
-    // Browser Shorts (youtube.com/shorts in a mobile browser). Only a salted hash of the id is kept.
-    private String browserPkg,browserIdentity,browserMode="none";
+    // Browser Shorts/Reels. Only a platform-scoped salted hash of the video id is kept.
+    private String browserPkg,browserIdentity,browserMode="none",browserPlatform="";
     private long browserMovementAt;
     private int browserRetries;
     private boolean browserQueued;
@@ -245,7 +245,7 @@ public final class ProbeService extends AccessibilityService {
         if(BrowserSignals.browser(pkg)) { browserEvent(event,pkg); return; }
         if(browserPkg!=null && (Detectors.forPackage(pkg)!=null || event.getEventType()==AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
                 || event.getEventType()==AccessibilityEvent.TYPE_WINDOWS_CHANGED)) {
-            invalidateReads();browserPkg=browserIdentity=null;browserMode="none";browserMovementAt=0;
+            invalidateReads();browserPkg=browserIdentity=null;browserMode="none";browserPlatform="";browserMovementAt=0;
         }
         ShortVideoDetector detector=Detectors.forPackage(pkg);
         if(detector==null) {
@@ -316,7 +316,7 @@ public final class ProbeService extends AccessibilityService {
             youtubeFast.reset();
             instagramConfirmedAt=youtubeConfirmedAt=lastPagerAt=0;
             ProbeStore.reset(pkg);
-            browserIdentity=null;browserMode="none";browserMovementAt=0;
+            browserIdentity=null;browserMode="none";browserPlatform="";browserMovementAt=0;
             applyProfile();
         }
         browserPkg=pkg;
@@ -356,14 +356,22 @@ public final class ProbeService extends AccessibilityService {
                 if(reading.cut)ProbeStore.truncated++;
                 ProbeStore.signals=reading.metadata();
                 ProbeStore.decision(SystemClock.elapsedRealtime()+" "+reading.metadata());
-                applyBrowser(epoch,reading.state,reading.identity,reading.mode);
+                applyBrowser(epoch,reading.state,reading.identity,reading.mode,reading.platform);
             }));
         },()->{});
     }
     private void applyBrowser(long epoch,int state,String identity,String mode) {
+        applyBrowser(epoch,state,identity,mode,"YouTube");
+    }
+    private void applyBrowser(long epoch,int state,String identity,String mode,String platform) {
         if(epoch!=readEpoch || destroyed || !trackingAllowed())return;
         long now=SystemClock.elapsedRealtime();
-        if(state==BrowserSignals.SHORTS && identity!=null) {
+        if(state==BrowserSignals.SHORTS && identity!=null && BrowserSignals.platform(platform)) {
+            if(!browserPlatform.isEmpty()&&!browserPlatform.equals(platform)){
+                engine.close(now,System.currentTimeMillis());ProbeStore.counter.forgetFingerprints();
+                browserIdentity=null;browserMode="none";browserMovementAt=0;
+            }
+            browserPlatform=platform;
             if(browserIdentity!=null && !browserMode.equals(mode)) {
                 // Hiding/revealing the toolbar must not turn the same item into a second exposure.
                 ProbeStore.counter.aliasIdentity(browserIdentity,identity);
@@ -377,7 +385,7 @@ public final class ProbeService extends AccessibilityService {
                     :ProbeStore.counter.verifiedFingerprint(identity,now);
             if(ProbeStore.counter.isCommitted(identity)) {
                 browserIdentity=identity;browserMode=mode;
-                engine.observe("YouTube",identity,ProbeStore.counter.committedAt(),now,System.currentTimeMillis());
+                engine.observe(platform,identity,ProbeStore.counter.committedAt(),now,System.currentTimeMillis());
                 indicatorReady=true;
             } else {engine.pause(now);hideIndicator();}
             if(ProbeStore.counter.accepted!=before)ProbeStore.transition(now+" BROWSER_ACCEPTED_TRANSITION #"+ProbeStore.counter.accepted);
@@ -393,16 +401,14 @@ public final class ProbeService extends AccessibilityService {
         }
         if(state==BrowserSignals.YOUTUBE_HOST_ONLY) {
             // A trimmed toolbar is ambiguous; preserve the last identity while timing is paused.
-            ProbeStore.status="YouTube domain visible, but no accessible Shorts player identity";
+            ProbeStore.status=platform+" domain visible, but no accessible short-video identity";
             if(browserRetries++<3)queueBrowser(700);
             return;
         }
         if(browserIdentity!=null)engine.close(now,System.currentTimeMillis());
         ProbeStore.counter.forgetFingerprints();
-        browserIdentity=null;browserMode="none";
-        ProbeStore.status=state==BrowserSignals.YOUTUBE_HOST_ONLY
-                ?"YouTube domain visible, but no accessible Shorts player identity"
-                :"Waiting for browser YouTube Shorts";
+        browserIdentity=null;browserMode="none";browserPlatform="";
+        ProbeStore.status="Waiting for browser Shorts or Reels";
     }
     private void queueBrowser(long delay) {
         if(browserQueued || browserPkg==null || destroyed || !trackingAllowed())return;

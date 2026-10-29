@@ -18,9 +18,9 @@ public final class ServicePipelineTest {
     }
     static void time(long now)throws Exception {Class.forName("android.os.SystemClock").getField("now").setLong(null,now);}
     static final class Sink implements CountingEngine.Sink {
-        int detected,ends;
+        int detected,ends;String lastPlatform="";
         public void startSession(String s,String p,long at){}
-        public void detected(String s,String p,long at){detected++;}
+        public void detected(String s,String p,long at){detected++;lastPlatform=p;}
         public void exposure(String s,String p,long start,long end,long duration,String c){}
         public void endSession(String s,long at){ends++;}
     }
@@ -677,13 +677,49 @@ public final class ServicePipelineTest {
         set(event,"pkg","in.scrollcount.probe");s.onAccessibilityEvent(event);pump(s,12000);
         check(!(Boolean)get(s,"browserQueued") && get(s,"browserPkg")==null,"app switch stops browser polling");
     }
+    static void browserSocialPipeline()throws Exception{
+        Sink sink=new Sink();ProbeService s=service("",sink);
+        set(s,"reader",new ReadLane((java.util.concurrent.Executor)Runnable::run));
+        ProbeStore.setDiagnostics(true,false);
+        android.view.accessibility.AccessibilityNodeInfo bar=browserNode("com.android.chrome:id/url_bar","instagram.com/reel/AbC_12345/");
+        android.view.accessibility.AccessibilityNodeInfo privateText=browserNode("private-message","Must never be read");
+        android.view.accessibility.AccessibilityNodeInfo root=browserNode("","",bar,privateText);
+        Class.forName("android.accessibilityservice.AccessibilityService").getField("root").set(null,root);
+        android.view.accessibility.AccessibilityEvent event=new android.view.accessibility.AccessibilityEvent();set(event,"pkg","com.android.chrome");set(event,"eventType",32);
+        s.onAccessibilityEvent(event);pump(s,10000);
+        check(sink.detected==1&&sink.lastPlatform.equals("Instagram"),"browser Instagram attribution");
+        set(bar,"label","instagram.com/reel/AbC_12345/?igsh=changed");pump(s,10600);
+        check(sink.detected==1,"URL tracking changes do not duplicate a Reel");
+        set(bar,"label","instagram.com/reels/Other_54321/");pump(s,11200);
+        check(sink.detected==2&&sink.lastPlatform.equals("Instagram"),"next Instagram Reel counts");
+        set(bar,"label","m.facebook.com/reel/1234567890/");pump(s,11800);
+        check(sink.detected==3&&sink.lastPlatform.equals("Facebook"),"same-browser platform switch uses Facebook history");
+        set(bar,"label","facebook.com/reel/1234567891");pump(s,12400);
+        check(sink.detected==4&&sink.lastPlatform.equals("Facebook"),"next Facebook Reel counts once");
+        set(bar,"label","instagram.com");pump(s,13000);
+        check(sink.detected==4&&((CountingEngine)get(s,"engine")).live(13000).paused,"host-only Instagram pauses without guessing");
+        set(bar,"label","facebook.com/watch/?v=1234567890");set(event,"eventType",2048);s.onAccessibilityEvent(event);pump(s,14500);
+        check(sink.detected==4&&get(s,"browserIdentity")==null,"regular Facebook videos close counting");
+        check((Integer)get(privateText,"reads")==0,"social browser detection reads no page captions/messages");
+        check(!ProbeStore.report().contains("AbC_12345")&&!ProbeStore.report().contains("1234567890"),"raw URLs/IDs never reach diagnostics");
+        set(bar,"label","facebook.com");set(bar,"description","https://www.facebook.com/reel/3333333333/");
+        BrowserReader.Result r=BrowserReader.read(root,"com.android.chrome",new byte[32]);
+        check(r.state==BrowserSignals.SHORTS&&r.platform.equals("Facebook")&&r.mode.equals("url"),"full toolbar description recovers trimmed Facebook URL");
+        set(bar,"label","instagram.com");set(bar,"description","");
+        r=BrowserReader.read(root,"com.android.chrome",new byte[32]);
+        check(r.identity==null&&(Integer)get(privateText,"reads")==0,"Instagram host alone never authorizes webpage text reads");
+        set(bar,"description","https://facebook.com/reel/3333333333/");
+        check(BrowserReader.read(root,"com.android.chrome",new byte[32]).identity==null,"conflicting toolbar domains are not combined into an identity");
+        set(bar,"description","");set(bar,"label","instagram.com/reel/Secret_12345/");set(bar,"editable",true);set(bar,"focused",true);set(bar,"reads",0);
+        check(BrowserReader.read(root,"com.android.chrome",new byte[32]).state==BrowserSignals.EDITING&&(Integer)get(bar,"reads")==0,"typed social URL is not read");
+    }
     public static void main(String[] args)throws Exception {
         snapshot=Class.forName("in.scrollcount.probe.ProbeService$Snapshot");result=Class.forName("in.scrollcount.probe.ProbeService$ScanResult");
         int failures=0;
-        for(String name:new String[]{"browserReaderGuards","browserCountingPipeline","browserReadPipeline","observedSnapchatPipeline","snapchatPipeline","facebookPipeline","missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels","siblingSheetPipeline","sourceBehindSlowTree"})try {
+        for(String name:new String[]{"browserSocialPipeline","browserReaderGuards","browserCountingPipeline","browserReadPipeline","observedSnapchatPipeline","snapchatPipeline","facebookPipeline","missingIndices","partialRead","hiddenWrapper","youtubeWrapper","optionalAliasBudget","staleSource","instagramProfile","reusedIndex","hiddenPlayerContainers","missingSourceMetadata","ancestorSource","eventPipeline","lateIndexedPipeline","noCountForActions","pendingSuperseded","legacyLayoutPipeline","legacyPreviewExcluded","overlayAffordancePipeline","actualOverlayPanels","siblingSheetPipeline","sourceBehindSlowTree"})try {
             Method test=ServicePipelineTest.class.getDeclaredMethod(name);test.invoke(null);
         }catch(InvocationTargetException e){failures++;System.err.println(name+": "+e.getCause());e.getCause().printStackTrace();}
         check(failures==0,"service pipeline regressions: "+failures);
-        System.out.println("PASS: 27 service cases (including browser URL/title/privacy/lifecycle regressions) with supplied Snapchat 14.29 structural replay with unindexed Snapchat Spotlight and content-free metadata including redacted-ID Facebook snapshot/source/counting guards, modern/legacy/overlay/sibling-sheet layouts and 40 rapid indexed events during a blocked tree read (340 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
+        System.out.println("PASS: 28 service cases including Instagram/Facebook browser attribution and page-read exclusions (including browser URL/title/privacy/lifecycle regressions) with supplied Snapchat 14.29 structural replay with unindexed Snapchat Spotlight and content-free metadata including redacted-ID Facebook snapshot/source/counting guards, modern/legacy/overlay/sibling-sheet layouts and 40 rapid indexed events during a blocked tree read (340 synthetic exposures), repeated/missing indices, missing/descendant sources, long views, hidden wrappers, actions, windows, privacy and partial-read guards");
     }
 }

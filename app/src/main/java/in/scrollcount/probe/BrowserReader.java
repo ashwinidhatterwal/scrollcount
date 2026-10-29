@@ -7,9 +7,9 @@ import java.util.Locale;
 final class BrowserReader {
     static final class Result {
         int state=BrowserSignals.UNAVAILABLE,nodes;
-        String identity,mode="none";
+        String identity,mode="none",platform="YouTube";
         boolean bar,editing,player,title,cut;
-        String metadata(){return "browserState="+state+", bar="+bar+", editing="+editing+", mode="+mode
+        String metadata(){return "browserState="+state+", platform="+platform+", bar="+bar+", editing="+editing+", mode="+mode
                 +", shortsPlayer="+player+", titleAvailable="+title+", nodes="+nodes+", cut="+cut;}
     }
     static Result read(AccessibilityNodeInfo root,String pkg,byte[] salt) {
@@ -27,7 +27,7 @@ final class BrowserReader {
                     // The read-only toolbar may expose a full URL as its description.
                     BrowserSignals.Reading description=BrowserSignals.parse(bar.getContentDescription());
                     BrowserSignals.Reading next=text;
-                    if((text.state==BrowserSignals.UNAVAILABLE || text.state==BrowserSignals.YOUTUBE_HOST_ONLY)
+                    if((text.state==BrowserSignals.UNAVAILABLE || text.state==BrowserSignals.YOUTUBE_HOST_ONLY&&text.platform.equals(description.platform))
                             && description.state==BrowserSignals.SHORTS)next=description;
                     if(address==null || next.state==BrowserSignals.SHORTS
                             || (address.state==BrowserSignals.UNAVAILABLE && next.state!=BrowserSignals.UNAVAILABLE))address=next;
@@ -35,10 +35,10 @@ final class BrowserReader {
             } finally {for(AccessibilityNodeInfo bar:bars)bar.recycle();}
         }
         if(out.editing){out.state=BrowserSignals.EDITING;return out;}
-        if(address!=null)out.state=address.state;
-        if(out.state==BrowserSignals.SHORTS){out.identity=BrowserSignals.identity(salt,address.shortId);out.mode="url";return out;}
+        if(address!=null){out.state=address.state;out.platform=address.platform;}
+        if(out.state==BrowserSignals.SHORTS){out.identity=BrowserSignals.identity(salt,address.platform,address.shortId);out.mode="url";return out;}
         // No page labels are read on arbitrary sites, while typing, or on regular watch pages.
-        if(out.state!=BrowserSignals.YOUTUBE_HOST_ONLY)return out;
+        if(out.state!=BrowserSignals.YOUTUBE_HOST_ONLY||!out.platform.equals("YouTube"))return out;
         Page page=new Page(out,salt);
         page.walk(root,0,false,false);
         out.player=page.player;out.title=page.title!=null;

@@ -13,7 +13,7 @@ mkdir -p "$out/classes" "$out/dex"
 "$bt/aapt2" compile --no-crunch --dir app/src/main/res -o "$out/resources.zip"
 sed -e 's/<manifest /<manifest package="in.scrollcount.probe" /' -e 's/${applicationId}/in.scrollcount.probe/g' app/src/main/AndroidManifest.xml > "$out/AndroidManifest.xml"
 "$bt/aapt2" link -o "$out/unsigned.apk" -I "$platform" --manifest "$out/AndroidManifest.xml" \
-  -A app/src/main/assets --min-sdk-version 26 --target-sdk-version 36 --version-code 40 --version-name 1.2.22 "$out/resources.zip"
+  -A app/src/main/assets --min-sdk-version 26 --target-sdk-version 36 --version-code 41 --version-name 1.2.23 "$out/resources.zip"
 find app/src/main/java -name '*.java' -print > "$out/sources.txt"
 "$JAVA_HOME/bin/javac" --release 8 -classpath "$platform" -d "$out/classes" @"$out/sources.txt"
 "$JAVA_HOME/bin/jar" cf "$out/classes.jar" -C "$out/classes" .
