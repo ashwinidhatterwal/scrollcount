@@ -23,6 +23,7 @@ public final class ProbeActivity extends Activity {
     private LinearLayout countingState;
     private ProgressBar igBar,ytBar,fbBar,snapBar,goalBar;
     private TrendView trend;
+    private ScrollAvatarView avatarView;
     private LinearLayout sessions;
     private HistoryStore.Stats stats=new HistoryStore.Stats();
     private long loadedRevision=-1,loadedDay=-1;
@@ -118,6 +119,7 @@ public final class ProbeActivity extends Activity {
         nav.removeAllViews();
         total=null;
         trend=null;
+        avatarView=null;
         sessions=null;
         String[] labels= {
             "Today","Friends","Insights","Settings"
@@ -202,7 +204,10 @@ public final class ProbeActivity extends Activity {
         total.setSingleLine(true);
         total.setAutoSizeTextTypeUniformWithConfiguration(32,72,2,android.util.TypedValue.COMPLEX_UNIT_SP);
         hero.addView(total,new LinearLayout.LayoutParams(-1,ui.dp(100)));
-        ui.gap(hero,12);
+        ui.gap(hero,10);
+        avatarView=new ScrollAvatarView(ui,false);
+        hero.addView(avatarView,new LinearLayout.LayoutParams(-1,ui.dp(136)));
+        ui.gap(hero,8);
         
         addCard(hero);
         LinearLayout platforms=ui.card();
@@ -484,7 +489,7 @@ public final class ProbeActivity extends Activity {
     private void footer() {
         ui.gap(body,10);
         body.addView(ui.text("Private counting. Optional sharing. Just awareness.",12,ui.muted,false));
-        body.addView(ui.text("ScrollCount 1.2.12",11,ui.muted,false));
+        body.addView(ui.text("ScrollCount 1.2.24",11,ui.muted,false));
         error=ui.text("",13,ui.dark?0xffffb6ac:0xffa13c30,false);
         body.addView(error);
     }
@@ -525,6 +530,7 @@ public final class ProbeActivity extends Activity {
             detail.setText(!ready?"Check Accessibility settings: access is off or the service is disconnected.":running?"Works while this app is closed.":"Saved history stays safe.");
             toggle.setText(running?"Pause":"Resume");
             int goal=prefs.getInt("dailyGoal",0);
+            if(avatarView!=null)avatarView.update(detected,goal);
             goalText.setText(goal==0?"Set a goal in Settings":seen<goal?Ui.number(seen)+" of "+Ui.number(goal)+" seen today · "+Ui.number(goal-seen)+" to your chosen limit":"You've reached your chosen limit of "+Ui.number(goal)+" seen. Pause whenever you like.");
             goalBar.setVisibility(goal==0?View.GONE:View.VISIBLE);
             goalBar.setProgress(goal==0?0:(int)Math.min(1000,seen*1000/goal));

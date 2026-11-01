@@ -106,7 +106,13 @@ final class FriendsPage {
         boolean mineCurrent=myDay.equals(FriendSnapshot.day(System.currentTimeMillis()));
         LinearLayout totals=ui.row();totals.setGravity(Gravity.TOP);
         totals.addView(comparisonTotal("You",mineCurrent?Ui.number(myReels+myShorts):"—",ui.accent),new LinearLayout.LayoutParams(0,-2,1));
-        totals.addView(comparisonTotal(f.name,current?Ui.number(f.reels+f.shorts):"—",ui.dark?0xffbaa9ee:0xff8270b5),new LinearLayout.LayoutParams(0,-2,1));sheet.addView(totals);ui.gap(sheet,16);
+        totals.addView(comparisonTotal(f.name,current?Ui.number(f.reels+f.shorts):"—",ui.dark?0xffbaa9ee:0xff8270b5),new LinearLayout.LayoutParams(0,-2,1));sheet.addView(totals);ui.gap(sheet,10);
+        LinearLayout avatars=ui.row();
+        ScrollAvatarView myAvatar=new ScrollAvatarView(ui,true),friendAvatar=new ScrollAvatarView(ui,true);
+        myAvatar.update(mineCurrent?myReels+myShorts:0,0);friendAvatar.update(current?f.reels+f.shorts:0,0);
+        avatars.addView(myAvatar,new LinearLayout.LayoutParams(0,ui.dp(116),1));
+        avatars.addView(friendAvatar,new LinearLayout.LayoutParams(0,ui.dp(116),1));
+        sheet.addView(avatars);ui.gap(sheet,12);
         if(current&&mineCurrent){
             TextView difference=ui.text(FriendSnapshot.comparison(myReels+myShorts,f.reels+f.shorts),16,ui.accent,true);difference.setPadding(ui.dp(14),ui.dp(12),ui.dp(14),ui.dp(12));difference.setBackground(ui.shape(ui.soft,14));sheet.addView(difference);ui.gap(sheet,14);
             sheet.addView(new FriendComparisonView(ui,myReels+myShorts,f.reels+f.shorts,f.name),new LinearLayout.LayoutParams(-1,ui.dp(144*Math.max(1,activity.getResources().getConfiguration().fontScale))));

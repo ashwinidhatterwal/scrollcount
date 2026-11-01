@@ -372,7 +372,7 @@ public final class ProbeService extends AccessibilityService {
                 browserIdentity=null;browserMode="none";browserMovementAt=0;
             }
             browserPlatform=platform;
-            if(browserIdentity!=null && !browserMode.equals(mode)) {
+            if(browserIdentity!=null && !browserMode.equals(mode) && (browserMovementAt==0 || now-browserMovementAt>2500)) {
                 // Hiding/revealing the toolbar must not turn the same item into a second exposure.
                 ProbeStore.counter.aliasIdentity(browserIdentity,identity);
                 engine.aliasIdentity(browserIdentity,identity);
