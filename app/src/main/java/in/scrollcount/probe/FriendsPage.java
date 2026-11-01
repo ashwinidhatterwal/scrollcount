@@ -68,8 +68,8 @@ final class FriendsPage {
         }
         for(FriendStore.Friend f:store.friends.values()){
             LinearLayout card=ui.card();card.setPadding(ui.dp(14),ui.dp(12),ui.dp(14),ui.dp(12));
-            LinearLayout row=ui.row();TextView avatar=avatar(f.name,40);
-            LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(40),ui.dp(40));ap.setMargins(0,0,ui.dp(12),0);row.addView(avatar,ap);
+            LinearLayout row=ui.row();ScrollAvatarView avatar=new ScrollAvatarView(ui,true);avatar.update(f.received>0?f.reels+f.shorts:0,0);
+            LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(44),ui.dp(44));ap.setMargins(0,0,ui.dp(12),0);row.addView(avatar,ap);
             LinearLayout words=ui.column();TextView name=ui.text(f.name,17,ui.ink,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);words.addView(name);
             words.addView(ui.text(updated(f),11,ui.muted,false));row.addView(words,new LinearLayout.LayoutParams(0,-2,1));
             LinearLayout count=ui.column();count.setPadding(ui.dp(10),0,0,0);TextView value=ui.text(f.received>0?Ui.number(f.reels+f.shorts):"—",25,ui.ink,true);value.setGravity(Gravity.END);count.addView(value);
@@ -98,21 +98,15 @@ final class FriendsPage {
         comparedReels=f.reels;comparedShorts=f.shorts;ownReels=myReels;ownShorts=myShorts;comparedDay=f.day+myDay;comparedReceived=f.received;comparedName=f.name;comparedCalendar=FriendSnapshot.day(System.currentTimeMillis());
         LinearLayout outer=ui.column();outer.setPadding(ui.dp(12),ui.dp(12),ui.dp(12),ui.dp(12));LinearLayout sheet=ui.card();outer.addView(sheet);
         View handle=new View(activity);handle.setBackground(ui.shape(ui.line,3));LinearLayout.LayoutParams hp=new LinearLayout.LayoutParams(ui.dp(40),ui.dp(4));hp.gravity=Gravity.CENTER_HORIZONTAL;hp.setMargins(0,0,0,ui.dp(18));sheet.addView(handle,hp);
-        LinearLayout heading=ui.row();heading.addView(avatar(f.name,44),new LinearLayout.LayoutParams(ui.dp(44),ui.dp(44)));
-        LinearLayout title=ui.column();title.setPadding(ui.dp(12),0,0,0);title.addView(ui.text(f.name,22,ui.ink,true));title.addView(ui.text(updated(f),12,ui.muted,false));heading.addView(title,new LinearLayout.LayoutParams(0,-2,1));
-        TextView close=ui.text("×",26,ui.muted,false);close.setGravity(Gravity.CENTER);close.setContentDescription("Close comparison");close.setFocusable(true);heading.addView(close,new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));close.setOnClickListener(v->comparison.dismiss());sheet.addView(heading);ui.gap(sheet,20);
-        TextView period=ui.text("TODAY · SCROLLS",11,ui.muted,true);sheet.addView(period);ui.gap(sheet,10);
         boolean current=f.received>0&&f.day.equals(FriendSnapshot.day(System.currentTimeMillis()));
         boolean mineCurrent=myDay.equals(FriendSnapshot.day(System.currentTimeMillis()));
+        LinearLayout heading=ui.row();ScrollAvatarView topAvatar=new ScrollAvatarView(ui,true);topAvatar.update(current?f.reels+f.shorts:0,0);heading.addView(topAvatar,new LinearLayout.LayoutParams(ui.dp(44),ui.dp(44)));
+        LinearLayout title=ui.column();title.setPadding(ui.dp(12),0,0,0);title.addView(ui.text(f.name,22,ui.ink,true));title.addView(ui.text(updated(f),12,ui.muted,false));heading.addView(title,new LinearLayout.LayoutParams(0,-2,1));
+        TextView close=ui.text("×",26,ui.muted,false);close.setGravity(Gravity.CENTER);close.setContentDescription("Close comparison");close.setFocusable(true);heading.addView(close,new LinearLayout.LayoutParams(ui.dp(48),ui.dp(48)));close.setOnClickListener(v->comparison.dismiss());sheet.addView(heading);ui.gap(sheet,20);
+        TextView period=ui.text("TODAY · SCROLLS",11,ui.muted,true);sheet.addView(period);ui.gap(sheet,12);
         LinearLayout totals=ui.row();totals.setGravity(Gravity.TOP);
-        totals.addView(comparisonTotal("You",mineCurrent?Ui.number(myReels+myShorts):"—",ui.accent),new LinearLayout.LayoutParams(0,-2,1));
-        totals.addView(comparisonTotal(f.name,current?Ui.number(f.reels+f.shorts):"—",ui.dark?0xffbaa9ee:0xff8270b5),new LinearLayout.LayoutParams(0,-2,1));sheet.addView(totals);ui.gap(sheet,10);
-        LinearLayout avatars=ui.row();
-        ScrollAvatarView myAvatar=new ScrollAvatarView(ui,true),friendAvatar=new ScrollAvatarView(ui,true);
-        myAvatar.update(mineCurrent?myReels+myShorts:0,0);friendAvatar.update(current?f.reels+f.shorts:0,0);
-        avatars.addView(myAvatar,new LinearLayout.LayoutParams(0,ui.dp(116),1));
-        avatars.addView(friendAvatar,new LinearLayout.LayoutParams(0,ui.dp(116),1));
-        sheet.addView(avatars);ui.gap(sheet,12);
+        totals.addView(comparisonTotal("You",mineCurrent?Ui.number(myReels+myShorts):"—",ui.accent,mineCurrent?myReels+myShorts:0),new LinearLayout.LayoutParams(0,-2,1));
+        totals.addView(comparisonTotal(f.name,current?Ui.number(f.reels+f.shorts):"—",ui.dark?0xffbaa9ee:0xff8270b5,current?f.reels+f.shorts:0),new LinearLayout.LayoutParams(0,-2,1));sheet.addView(totals);ui.gap(sheet,16);
         if(current&&mineCurrent){
             TextView difference=ui.text(FriendSnapshot.comparison(myReels+myShorts,f.reels+f.shorts),16,ui.accent,true);difference.setPadding(ui.dp(14),ui.dp(12),ui.dp(14),ui.dp(12));difference.setBackground(ui.shape(ui.soft,14));sheet.addView(difference);ui.gap(sheet,14);
             sheet.addView(new FriendComparisonView(ui,myReels+myShorts,f.reels+f.shorts,f.name),new LinearLayout.LayoutParams(-1,ui.dp(144*Math.max(1,activity.getResources().getConfiguration().fontScale))));
@@ -122,9 +116,16 @@ final class FriendsPage {
         ScrollView scroll=new ScrollView(activity){@Override protected void onMeasure(int width,int height){int limit=activity.getResources().getDisplayMetrics().heightPixels*85/100;int requested=View.MeasureSpec.getSize(height);super.onMeasure(width,View.MeasureSpec.makeMeasureSpec(requested==0?limit:Math.min(requested,limit),View.MeasureSpec.AT_MOST));}};scroll.setFillViewport(false);scroll.addView(outer);scroll.setLayoutParams(new android.view.ViewGroup.LayoutParams(-1,-2));comparison.setContentView(scroll);
         if(comparison.getWindow()!=null)comparison.getWindow().setLayout(-1,-2);
     }
-    private LinearLayout comparisonTotal(String name,String value,int color){
-        LinearLayout box=ui.column();TextView label=ui.text(name,13,ui.muted,false);label.setMaxLines(2);label.setEllipsize(android.text.TextUtils.TruncateAt.END);box.addView(label);
-        TextView count=ui.text(value,34,color,true);count.setMaxLines(1);count.setAutoSizeTextTypeUniformWithConfiguration(18,34,1,android.util.TypedValue.COMPLEX_UNIT_SP);box.addView(count,new LinearLayout.LayoutParams(-1,ui.dp(54)));return box;
+    private LinearLayout comparisonTotal(String name,String value,int color,long scrolls){
+        LinearLayout box=ui.column();
+        LinearLayout personRow=ui.row();
+        ScrollAvatarView personAvatar=new ScrollAvatarView(ui,true);personAvatar.update(scrolls,0);
+        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(40),ui.dp(40));ap.setMargins(0,0,ui.dp(10),0);
+        personRow.addView(personAvatar,ap);
+        TextView label=ui.text(name,14,ui.ink,true);label.setMaxLines(2);label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        personRow.addView(label,new LinearLayout.LayoutParams(0,-2,1));
+        box.addView(personRow);ui.gap(box,6);
+        TextView count=ui.text(value,34,color,true);count.setMaxLines(1);count.setAutoSizeTextTypeUniformWithConfiguration(18,34,1,android.util.TypedValue.COMPLEX_UNIT_SP);box.addView(count,new LinearLayout.LayoutParams(-1,ui.dp(50)));return box;
     }
     private void add(){
         new AlertDialog.Builder(activity).setTitle("Add a friend").setItems(new String[]{"Create invitation","Accept invitation"},(d,i)->{if(i==0){if(store.id().isEmpty())setup(this::invite,store.server());else invite();}else acceptInput();}).setNegativeButton("Cancel",null).show();

@@ -1,9 +1,9 @@
 package in.scrollcount.probe;
 
 /**
- * Pure-Java kinematic and expression state machine for the ScrollCount animated avatar.
+ * Pure-Java expression and body-language state for the ScrollCount animated avatar.
  * Maps a person's daily scroll count (and optional daily goal) plus animation time (ms)
- * into facial expression and body-language parameters at >= 15 FPS.
+ * into smooth posture and facial expression parameters at 24 FPS (>= 15 FPS).
  */
 public final class ScrollAvatarState {
     public static final int TIER_ZEN = 0;
@@ -13,37 +13,37 @@ public final class ScrollAvatarState {
     public static final int TIER_FATIGUED = 4;
     public static final int TIER_ZOMBIE = 5;
 
-    /** Minimum frame interval for 24 FPS (~41ms, well above the 15 FPS / 66ms requirement). */
+    /** Frame interval for 24 FPS (~41ms, well above the 15 FPS / 66ms minimum). */
     public static final long FRAME_INTERVAL_MS = 41L;
 
     public final long scrolls;
     public final int dailyGoal;
     public final int tier;
-    public final float stress; // 0.0 (zen) .. 1.0 (zombie)
+    public final float stress;
     public final String moodTitle;
     public final String moodSubtitle;
 
-    // Body language & posture kinematics
-    public final float spineSlouchDeg;   // 0 deg (upright) .. 40 deg (hunched over phone)
-    public final float headTiltDeg;      // -4 deg .. +32 deg forward neck droop
-    public final float headSwayX;        // -1.0 .. +1.0 horizontal zombie sway
-    public final float shoulderDrop;     // 0.0 (squared) .. 1.0 (slumped forward)
-    public final float breathOffset;     // -1.0 .. +1.0 chest breathing cycle
-    public final float phoneRaise;       // 0.0 (lowered/resting) .. 1.0 (held close to face)
-    public final float thumbSwipePhase;  // 0.0 .. 1.0 cyclic thumb flick position
-    public final float armJitter;        // -1.0 .. +1.0 fatigue tremor
+    // Smooth body language & posture parameters
+    public final float spineSlouchDeg;
+    public final float headTiltDeg;
+    public final float headSwayX;
+    public final float shoulderDrop;
+    public final float breathOffset;
+    public final float phoneRaise;
+    public final float thumbSwipePhase;
+    public final float armJitter;
 
-    // Facial expression parameters
-    public final float eyeOpenness;      // 0.0 (closed) .. 1.25 (wide trance)
-    public final float upperLidDroop;    // 0.0 (alert) .. 0.65 (heavy tired lids)
-    public final float pupilOffsetY;     // -1.0 .. +1.0 vertical eye tracking of feed
-    public final float browAngleDeg;     // -18 deg (furrowed) .. +10 deg (relaxed/raised)
-    public final float mouthCurve;       // +1.0 (happy smile) .. -1.0 (weary frown / slack jaw)
-    public final float jawOpen;          // 0.0 (closed) .. 1.0 (zombie slack jaw / yawn)
-    public final float eyeBagAlpha;      // 0.0 .. 1.0 dark under-eye circles
-    public final float screenGlowAlpha;  // 0.0 .. 1.0 blue screen reflection on face
-    public final float spiralPhaseRad;   // radians for zombie spiral eyes
-    public final float sweatDropProgress;// 0.0 .. 1.0 falling sweat drop in fatigued tiers
+    // Smooth facial expression parameters
+    public final float eyeOpenness;
+    public final float upperLidDroop;
+    public final float pupilOffsetY;
+    public final float browAngleDeg;
+    public final float mouthCurve;
+    public final float jawOpen;
+    public final float eyeBagAlpha;
+    public final float screenGlowAlpha;
+    public final float spiralPhaseRad;
+    public final float sweatDropProgress;
 
     private ScrollAvatarState(
             long scrolls, int dailyGoal, int tier, float stress,
@@ -98,137 +98,133 @@ public final class ScrollAvatarState {
         return TIER_ZOMBIE;
     }
 
-    public static float computeStress(long scrolls, int dailyGoal) {
-        long s = Math.max(0L, scrolls);
-        if (s == 0L) return 0f;
+    public static float computeStress(float scrolls, int dailyGoal) {
+        float s = Math.max(0f, scrolls);
+        if (s <= 0.01f) return 0f;
         float scale = dailyGoal > 0 ? Math.max(20f, dailyGoal * 1.6f) : 320f;
-        return Math.min(1f, Math.max(0.05f, s / scale));
+        return Math.min(1f, Math.max(0.04f, s / scale));
     }
 
     public static ScrollAvatarState evaluate(long scrolls, int dailyGoal, long timeMs) {
-        long cleanScrolls = Math.max(0L, scrolls);
+        return evaluateSmooth((float) Math.max(0L, scrolls), dailyGoal, timeMs);
+    }
+
+    public static ScrollAvatarState evaluateSmooth(float smoothScrolls, int dailyGoal, long timeMs) {
+        long cleanScrolls = Math.max(0L, Math.round(smoothScrolls));
         int tier = computeTier(cleanScrolls, dailyGoal);
-        float stress = computeStress(cleanScrolls, dailyGoal);
+        float stress = computeStress(smoothScrolls, dailyGoal);
         double t = (timeMs % 3600000L) / 1000.0;
 
         String title;
         String subtitle;
         switch (tier) {
             case TIER_ZEN:
-                title = "Zen & Unplugged";
-                subtitle = "Upright posture · Relaxed breathing";
+                title = "Fresh & rested";
+                subtitle = "No scrolls yet today";
                 break;
             case TIER_FRESH:
-                title = "Mindful & Fresh";
-                subtitle = "Balanced posture · Light browsing";
+                title = "Light browsing";
+                subtitle = "Taking it easy";
                 break;
             case TIER_CRUISING:
-                title = "Casually Cruising";
-                subtitle = "Leaning in · Steady thumb rhythm";
+                title = "Steady scrolling";
+                subtitle = "Cruising through the feed";
                 break;
             case TIER_TRANCE:
-                title = "Feed Trance";
-                subtitle = "Forward hunch · Unblinking screen lock";
+                title = "Deep in the feed";
+                subtitle = "Locked into the screen";
                 break;
             case TIER_FATIGUED:
-                title = "Scroll Fatigue";
-                subtitle = "Slumped shoulders · Tired eyes";
+                title = "Tired eyes";
+                subtitle = "Good time for a short break";
                 break;
             default:
-                title = "Doomscroll Mode";
-                subtitle = "Deep slouch · Time for a breather";
+                title = "Scrolled out";
+                subtitle = "Time to rest your eyes";
                 break;
         }
 
-        // Breathing slows in Zen (0.35 Hz) and becomes shallow/rapid under high scroll load (1.4 Hz)
-        double breathHz = 0.35 + stress * 1.05;
+        double breathHz = 0.38 + stress * 0.85;
         float breathOffset = (float) Math.sin(t * Math.PI * 2.0 * breathHz);
 
-        // Spine slouch and head forward droop progress smoothly with scroll load
-        float spineSlouchDeg = stress * 38f + (tier == TIER_ZOMBIE ? 4f : 0f);
+        float spineSlouchDeg = stress * 26f + (tier == TIER_ZOMBIE ? 3f : 0f);
         float headTiltDeg = (tier == TIER_ZEN)
-                ? (float) (Math.sin(t * 1.5) * 2.5)
-                : (4f + stress * 28f + (float) Math.sin(t * 2.2) * (1.5f + stress * 2.5f));
+                ? (float) (Math.sin(t * 1.4) * 2.0)
+                : (3f + stress * 20f + (float) Math.sin(t * 2.0) * (1.2f + stress * 1.8f));
         float headSwayX = tier >= TIER_FATIGUED
-                ? (float) Math.sin(t * (tier == TIER_ZOMBIE ? 3.2 : 1.8)) * (tier == TIER_ZOMBIE ? 1.0f : 0.45f)
-                : (float) Math.sin(t * 0.9) * 0.12f;
+                ? (float) Math.sin(t * (tier == TIER_ZOMBIE ? 2.8 : 1.6)) * (tier == TIER_ZOMBIE ? 0.85f : 0.4f)
+                : (float) Math.sin(t * 0.9) * 0.1f;
 
-        float shoulderDrop = Math.min(1f, stress * 1.05f);
-        float phoneRaise = tier == TIER_ZEN ? 0.08f : Math.min(1f, 0.38f + stress * 0.62f);
+        float shoulderDrop = Math.min(1f, stress * 1.0f);
+        float phoneRaise = tier == TIER_ZEN ? 0.0f : Math.min(1f, 0.35f + stress * 0.65f);
 
-        // Thumb swipe speed scales with scroll intensity (0 in Zen, up to 3.4 swipes/sec in Zombie)
-        double swipeHz = tier == TIER_ZEN ? 0.0 : (0.55 + stress * 2.85);
+        double swipeHz = tier == TIER_ZEN ? 0.0 : (0.6 + stress * 2.4);
         float thumbSwipePhase = tier == TIER_ZEN ? 0f : (float) ((t * swipeHz) % 1.0);
 
-        // Subtle arm fatigue tremor when fatigued/zombie
         float armJitter = tier >= TIER_FATIGUED
-                ? (float) Math.sin(t * 28.0) * (tier == TIER_ZOMBIE ? 1.0f : 0.55f)
+                ? (float) Math.sin(t * 24.0) * (tier == TIER_ZOMBIE ? 0.75f : 0.4f)
                 : 0f;
 
-        // Blinking cycle: natural blink in Fresh/Cruising, wide unblinking stare in Trance, heavy droop in Fatigued
-        double blinkCycle = (t % 3.6);
-        boolean blinking = (tier == TIER_FRESH || tier == TIER_CRUISING) && blinkCycle > 3.42;
+        double blinkCycle = (t % 3.8);
+        boolean blinking = (tier <= TIER_CRUISING) && blinkCycle > 3.62;
         float eyeOpenness;
         float upperLidDroop;
-        if (tier == TIER_ZEN) {
+        if (blinking) {
             eyeOpenness = 0.08f;
-            upperLidDroop = 0.0f;
-        } else if (blinking) {
-            eyeOpenness = 0.06f;
-            upperLidDroop = 0.1f;
-        } else if (tier == TIER_TRANCE) {
-            eyeOpenness = 1.22f;
             upperLidDroop = 0.05f;
+        } else if (tier == TIER_ZEN) {
+            eyeOpenness = 1.0f;
+            upperLidDroop = 0.0f;
+        } else if (tier == TIER_TRANCE) {
+            eyeOpenness = 1.16f;
+            upperLidDroop = 0.06f;
         } else if (tier == TIER_FATIGUED) {
-            eyeOpenness = 0.62f;
-            upperLidDroop = 0.52f + (float) Math.sin(t * 2.0) * 0.06f;
+            eyeOpenness = 0.72f;
+            upperLidDroop = 0.48f + (float) Math.sin(t * 1.8) * 0.05f;
         } else if (tier == TIER_ZOMBIE) {
-            eyeOpenness = 1.15f;
-            upperLidDroop = 0.35f;
+            eyeOpenness = 1.08f;
+            upperLidDroop = 0.36f;
         } else {
-            eyeOpenness = 1.0f - stress * 0.12f;
-            upperLidDroop = stress * 0.22f;
+            eyeOpenness = 1.0f - stress * 0.08f;
+            upperLidDroop = stress * 0.20f;
         }
 
-        // Pupils track vertically with each thumb swipe as the user watches Reels/Shorts
-        float pupilOffsetY = tier == TIER_ZEN ? 0f : (0.35f - thumbSwipePhase * 0.75f);
+        float pupilOffsetY = tier == TIER_ZEN ? 0f : (0.28f - (float) Math.sin(thumbSwipePhase * Math.PI) * 0.52f);
 
-        // Eyebrow angle: positive = relaxed arch, negative = furrowed / strained
         float browAngleDeg;
-        if (tier == TIER_ZEN) browAngleDeg = 6f;
-        else if (tier == TIER_FRESH) browAngleDeg = 4f;
+        if (tier == TIER_ZEN) browAngleDeg = 5f;
+        else if (tier == TIER_FRESH) browAngleDeg = 3.5f;
         else if (tier == TIER_CRUISING) browAngleDeg = 0f;
-        else if (tier == TIER_TRANCE) browAngleDeg = -9f;
-        else if (tier == TIER_FATIGUED) browAngleDeg = -14f;
-        else browAngleDeg = -18f;
+        else if (tier == TIER_TRANCE) browAngleDeg = -7f;
+        else if (tier == TIER_FATIGUED) browAngleDeg = -11f;
+        else browAngleDeg = -14f;
 
-        // Mouth curve: +1 smile -> 0 neutral -> -0.8 frown
         float mouthCurve;
         float jawOpen;
         if (tier == TIER_ZEN) {
-            mouthCurve = 0.85f;
+            mouthCurve = 0.78f;
             jawOpen = 0f;
         } else if (tier == TIER_FRESH) {
-            mouthCurve = 0.65f;
+            mouthCurve = 0.58f;
             jawOpen = 0f;
         } else if (tier == TIER_CRUISING) {
-            mouthCurve = 0.18f;
+            mouthCurve = 0.16f;
             jawOpen = 0f;
         } else if (tier == TIER_TRANCE) {
-            mouthCurve = -0.15f;
-            jawOpen = 0.18f;
+            mouthCurve = -0.12f;
+            jawOpen = 0.12f;
         } else if (tier == TIER_FATIGUED) {
-            mouthCurve = -0.62f;
-            jawOpen = 0.32f + (float) Math.max(0, Math.sin(t * 1.4)) * 0.25f;
+            mouthCurve = -0.52f;
+            jawOpen = 0.26f + (float) Math.max(0, Math.sin(t * 1.3)) * 0.20f;
         } else {
-            mouthCurve = -0.85f;
-            jawOpen = 0.65f + (float) Math.sin(t * 3.0) * 0.18f;
+            mouthCurve = -0.75f;
+            jawOpen = 0.52f + (float) Math.sin(t * 2.6) * 0.14f;
         }
 
         float eyeBagAlpha = stress < 0.35f ? 0f : Math.min(1f, (stress - 0.35f) / 0.65f);
-        float screenGlowAlpha = tier == TIER_ZEN ? 0f : Math.min(1f, 0.25f + stress * 0.75f);
-        float spiralPhaseRad = (float) ((t * 6.5) % (Math.PI * 2.0));
-        float sweatDropProgress = tier >= TIER_FATIGUED ? (float) ((t * 0.85) % 1.0) : 0f;
+        float screenGlowAlpha = tier == TIER_ZEN ? 0f : Math.min(1f, 0.22f + stress * 0.78f);
+        float spiralPhaseRad = (float) ((t * 5.8) % (Math.PI * 2.0));
+        float sweatDropProgress = tier >= TIER_FATIGUED ? (float) ((t * 0.75) % 1.0) : 0f;
 
         return new ScrollAvatarState(
                 cleanScrolls, dailyGoal, tier, stress, title, subtitle,
