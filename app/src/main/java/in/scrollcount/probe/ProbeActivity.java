@@ -24,6 +24,7 @@ public final class ProbeActivity extends Activity {
     private ProgressBar igBar,ytBar,fbBar,snapBar,goalBar;
     private TrendView trend;
     private ScrollAvatarView avatarView;
+    private TextView avatarStateLabel;
     private LinearLayout sessions;
     private HistoryStore.Stats stats=new HistoryStore.Stats();
     private long loadedRevision=-1,loadedDay=-1;
@@ -120,6 +121,7 @@ public final class ProbeActivity extends Activity {
         total=null;
         trend=null;
         avatarView=null;
+        avatarStateLabel=null;
         sessions=null;
         String[] labels= {
             "Today","Friends","Insights","Settings"
@@ -203,8 +205,14 @@ public final class ProbeActivity extends Activity {
         avatarParams.setMargins(0,0,ui.dp(18),0);
         hero.addView(avatarView,avatarParams);
         LinearLayout heroMain=ui.column();
-        heroMain.addView(ui.text("TODAY’S TOTAL",11,0xffc0dfc8,true));
-        ui.gap(heroMain,6);
+        LinearLayout heroTop=ui.row();
+        heroTop.addView(ui.text("TODAY’S TOTAL",11,0xffc0dfc8,true),new LinearLayout.LayoutParams(0,-2,1));
+        avatarStateLabel=ui.text("Unplugged",11,0xffe8f5ec,true);
+        avatarStateLabel.setPadding(ui.dp(10),ui.dp(3),ui.dp(10),ui.dp(3));
+        avatarStateLabel.setBackground(ui.shape(0x28ffffff,10));
+        heroTop.addView(avatarStateLabel);
+        heroMain.addView(heroTop);
+        ui.gap(heroMain,4);
         total=ui.text("0",72,0xfff5fff6,true);
         total.setSingleLine(true);
         total.setAutoSizeTextTypeUniformWithConfiguration(32,72,2,android.util.TypedValue.COMPLEX_UNIT_SP);
@@ -491,7 +499,7 @@ public final class ProbeActivity extends Activity {
     private void footer() {
         ui.gap(body,10);
         body.addView(ui.text("Private counting. Optional sharing. Just awareness.",12,ui.muted,false));
-        body.addView(ui.text("ScrollCount 1.2.24",11,ui.muted,false));
+        body.addView(ui.text("ScrollCount 1.2.25",11,ui.muted,false));
         error=ui.text("",13,ui.dark?0xffffb6ac:0xffa13c30,false);
         body.addView(error);
     }
@@ -532,7 +540,7 @@ public final class ProbeActivity extends Activity {
             detail.setText(!ready?"Check Accessibility settings: access is off or the service is disconnected.":running?"Works while this app is closed.":"Saved history stays safe.");
             toggle.setText(running?"Pause":"Resume");
             int goal=prefs.getInt("dailyGoal",0);
-            if(avatarView!=null)avatarView.update(detected,goal);
+            if(avatarView!=null){avatarView.update(detected,goal);if(avatarStateLabel!=null)avatarStateLabel.setText(avatarView.moodLabel());}
             goalText.setText(goal==0?"Set a goal in Settings":seen<goal?Ui.number(seen)+" of "+Ui.number(goal)+" seen today · "+Ui.number(goal-seen)+" to your chosen limit":"You've reached your chosen limit of "+Ui.number(goal)+" seen. Pause whenever you like.");
             goalBar.setVisibility(goal==0?View.GONE:View.VISIBLE);
             goalBar.setProgress(goal==0?0:(int)Math.min(1000,seen*1000/goal));

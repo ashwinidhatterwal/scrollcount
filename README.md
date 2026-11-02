@@ -1,6 +1,6 @@
-# ScrollCount 1.2.24
+# ScrollCount 1.2.25
 
-Native Android short-video scroll counter (`in.scrollcount.probe`, `versionCode = 42`, `minSdk = 26`, `targetSdk = 36`) with a 24 FPS scroll-reactive animated avatar, local SQLite history, and optional end-to-end encrypted Friends sharing via Cloudflare Workers + D1.
+Native Android short-video scroll counter (`in.scrollcount.probe`, `versionCode = 43`, `minSdk = 26`, `targetSdk = 36`) with a 24 FPS scroll-reactive animated avatar, local SQLite history, and optional end-to-end encrypted Friends sharing via Cloudflare Workers + D1.
 
 ## Build & Verify
 

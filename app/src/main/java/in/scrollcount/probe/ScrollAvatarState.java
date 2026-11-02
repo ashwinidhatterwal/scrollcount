@@ -1,9 +1,14 @@
 package in.scrollcount.probe;
 
 /**
- * Pure-Java expression and body-language state for the ScrollCount animated avatar.
- * Maps a person's daily scroll count (and optional daily goal) plus animation time (ms)
- * into smooth posture and facial expression parameters at 24 FPS (>= 15 FPS).
+ * Pure-Java expression and body-language state machine for the ScrollCount animated avatar.
+ * State transitions occur at exact scroll milestones:
+ *   0       -> TIER_ZEN      ("Unplugged")
+ *   1–99    -> TIER_FRESH    ("Mindful")
+ *   100–249 -> TIER_CRUISING ("Cruising")
+ *   250–499 -> TIER_TRANCE   ("Deep in the Feed")
+ *   500–699 -> TIER_FATIGUED ("Scroll Fatigue")
+ *   700+    -> TIER_ZOMBIE   ("Doomscroller")
  */
 public final class ScrollAvatarState {
     public static final int TIER_ZEN = 0;
@@ -13,7 +18,7 @@ public final class ScrollAvatarState {
     public static final int TIER_FATIGUED = 4;
     public static final int TIER_ZOMBIE = 5;
 
-    /** Frame interval for 24 FPS (~41ms, well above the 15 FPS / 66ms minimum). */
+    /** Frame interval for 24 FPS (~41ms, exceeding the 15 FPS / 66ms minimum). */
     public static final long FRAME_INTERVAL_MS = 41L;
 
     public final long scrolls;
@@ -80,29 +85,47 @@ public final class ScrollAvatarState {
         this.sweatDropProgress = sweatDropProgress;
     }
 
+    /**
+     * Exact scroll-count state thresholds:
+     * 0 -> Unplugged, 1–99 -> Mindful, 100–249 -> Cruising,
+     * 250–499 -> Deep in the Feed, 500–699 -> Scroll Fatigue, 700+ -> Doomscroller.
+     */
     public static int computeTier(long scrolls, int dailyGoal) {
         long s = Math.max(0L, scrolls);
         if (s == 0L) return TIER_ZEN;
-        if (dailyGoal > 0) {
-            float ratio = (float) s / (float) dailyGoal;
-            if (ratio <= 0.25f) return TIER_FRESH;
-            if (ratio <= 0.65f) return TIER_CRUISING;
-            if (ratio <= 1.00f) return TIER_TRANCE;
-            if (ratio <= 1.50f) return TIER_FATIGUED;
-            return TIER_ZOMBIE;
-        }
-        if (s <= 25L) return TIER_FRESH;
-        if (s <= 75L) return TIER_CRUISING;
-        if (s <= 150L) return TIER_TRANCE;
-        if (s <= 300L) return TIER_FATIGUED;
+        if (s < 100L) return TIER_FRESH;
+        if (s < 250L) return TIER_CRUISING;
+        if (s < 500L) return TIER_TRANCE;
+        if (s < 700L) return TIER_FATIGUED;
         return TIER_ZOMBIE;
     }
 
     public static float computeStress(float scrolls, int dailyGoal) {
         float s = Math.max(0f, scrolls);
         if (s <= 0.01f) return 0f;
-        float scale = dailyGoal > 0 ? Math.max(20f, dailyGoal * 1.6f) : 320f;
-        return Math.min(1f, Math.max(0.04f, s / scale));
+        return Math.min(1f, Math.max(0.04f, s / 700f));
+    }
+
+    public static String titleForTier(int tier) {
+        switch (tier) {
+            case TIER_ZEN: return "Unplugged";
+            case TIER_FRESH: return "Mindful";
+            case TIER_CRUISING: return "Cruising";
+            case TIER_TRANCE: return "Deep in the Feed";
+            case TIER_FATIGUED: return "Scroll Fatigue";
+            default: return "Doomscroller";
+        }
+    }
+
+    public static String subtitleForTier(int tier) {
+        switch (tier) {
+            case TIER_ZEN: return "Fresh & rested · 0 scrolls";
+            case TIER_FRESH: return "Light browsing · Under 100 scrolls";
+            case TIER_CRUISING: return "Steady pace · 100+ scrolls";
+            case TIER_TRANCE: return "Locked into the screen · 250+ scrolls";
+            case TIER_FATIGUED: return "Tired eyes · 500+ scrolls";
+            default: return "Overloaded · 700+ scrolls";
+        }
     }
 
     public static ScrollAvatarState evaluate(long scrolls, int dailyGoal, long timeMs) {
@@ -115,34 +138,8 @@ public final class ScrollAvatarState {
         float stress = computeStress(smoothScrolls, dailyGoal);
         double t = (timeMs % 3600000L) / 1000.0;
 
-        String title;
-        String subtitle;
-        switch (tier) {
-            case TIER_ZEN:
-                title = "Fresh & rested";
-                subtitle = "No scrolls yet today";
-                break;
-            case TIER_FRESH:
-                title = "Light browsing";
-                subtitle = "Taking it easy";
-                break;
-            case TIER_CRUISING:
-                title = "Steady scrolling";
-                subtitle = "Cruising through the feed";
-                break;
-            case TIER_TRANCE:
-                title = "Deep in the feed";
-                subtitle = "Locked into the screen";
-                break;
-            case TIER_FATIGUED:
-                title = "Tired eyes";
-                subtitle = "Good time for a short break";
-                break;
-            default:
-                title = "Scrolled out";
-                subtitle = "Time to rest your eyes";
-                break;
-        }
+        String title = titleForTier(tier);
+        String subtitle = subtitleForTier(tier);
 
         double breathHz = 0.38 + stress * 0.85;
         float breathOffset = (float) Math.sin(t * Math.PI * 2.0 * breathHz);

@@ -71,7 +71,7 @@ final class FriendsPage {
             LinearLayout row=ui.row();ScrollAvatarView avatar=new ScrollAvatarView(ui,true);avatar.update(f.received>0?f.reels+f.shorts:0,0);
             LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(44),ui.dp(44));ap.setMargins(0,0,ui.dp(12),0);row.addView(avatar,ap);
             LinearLayout words=ui.column();TextView name=ui.text(f.name,17,ui.ink,true);name.setMaxLines(2);name.setEllipsize(android.text.TextUtils.TruncateAt.END);words.addView(name);
-            words.addView(ui.text(updated(f),11,ui.muted,false));row.addView(words,new LinearLayout.LayoutParams(0,-2,1));
+            words.addView(ui.text((f.received>0?avatar.moodLabel()+" · ":"")+updated(f),11,ui.muted,false));row.addView(words,new LinearLayout.LayoutParams(0,-2,1));
             LinearLayout count=ui.column();count.setPadding(ui.dp(10),0,0,0);TextView value=ui.text(f.received>0?Ui.number(f.reels+f.shorts):"—",25,ui.ink,true);value.setGravity(Gravity.END);count.addView(value);
             TextView label=ui.text("Scrolls",11,ui.muted,false);label.setGravity(Gravity.END);count.addView(label);
             if(activity.getResources().getConfiguration().fontScale>1.3f){card.addView(row);ui.gap(card,6);card.addView(count);}else{row.addView(count);card.addView(row);}
@@ -122,8 +122,11 @@ final class FriendsPage {
         ScrollAvatarView personAvatar=new ScrollAvatarView(ui,true);personAvatar.update(scrolls,0);
         LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(40),ui.dp(40));ap.setMargins(0,0,ui.dp(10),0);
         personRow.addView(personAvatar,ap);
-        TextView label=ui.text(name,14,ui.ink,true);label.setMaxLines(2);label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        personRow.addView(label,new LinearLayout.LayoutParams(0,-2,1));
+        LinearLayout personMeta=ui.column();
+        TextView label=ui.text(name,14,ui.ink,true);label.setMaxLines(1);label.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        TextView stateTitle=ui.text(personAvatar.moodLabel(),11,ui.muted,false);stateTitle.setMaxLines(1);stateTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        personMeta.addView(label);personMeta.addView(stateTitle);
+        personRow.addView(personMeta,new LinearLayout.LayoutParams(0,-2,1));
         box.addView(personRow);ui.gap(box,6);
         TextView count=ui.text(value,34,color,true);count.setMaxLines(1);count.setAutoSizeTextTypeUniformWithConfiguration(18,34,1,android.util.TypedValue.COMPLEX_UNIT_SP);box.addView(count,new LinearLayout.LayoutParams(-1,ui.dp(50)));return box;
     }
