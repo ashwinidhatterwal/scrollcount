@@ -118,15 +118,17 @@ final class FriendsPage {
     }
     private LinearLayout comparisonTotal(String name,String value,int color,long scrolls){
         LinearLayout box=ui.column();
+        TextView stateTitle=ui.text("",11,color,true);
+        stateTitle.setSingleLine(false);
+        stateTitle.setMaxLines(3);
+        stateTitle.setLineSpacing(ui.dp(1),1f);
+        box.addView(stateTitle,new LinearLayout.LayoutParams(-1,-2));ui.gap(box,4);
         LinearLayout personRow=ui.row();
-        ScrollAvatarView personAvatar=new ScrollAvatarView(ui,true);personAvatar.update(scrolls,0);
-        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(40),ui.dp(40));ap.setMargins(0,0,ui.dp(10),0);
+        ScrollAvatarView personAvatar=new ScrollAvatarView(ui,true);personAvatar.bindTitleView(stateTitle);personAvatar.update(scrolls,0);
+        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(ui.dp(42),ui.dp(42));ap.setMargins(0,0,ui.dp(10),0);
         personRow.addView(personAvatar,ap);
-        LinearLayout personMeta=ui.column();
-        TextView label=ui.text(name,14,ui.ink,true);label.setMaxLines(1);label.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        TextView stateTitle=ui.text(personAvatar.moodLabel(),11,ui.muted,false);stateTitle.setMaxLines(1);stateTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        personMeta.addView(label);personMeta.addView(stateTitle);
-        personRow.addView(personMeta,new LinearLayout.LayoutParams(0,-2,1));
+        TextView label=ui.text(name,15,ui.ink,true);label.setSingleLine(false);label.setMaxLines(2);
+        personRow.addView(label,new LinearLayout.LayoutParams(0,-2,1));
         box.addView(personRow);ui.gap(box,6);
         TextView count=ui.text(value,34,color,true);count.setMaxLines(1);count.setAutoSizeTextTypeUniformWithConfiguration(18,34,1,android.util.TypedValue.COMPLEX_UNIT_SP);box.addView(count,new LinearLayout.LayoutParams(-1,ui.dp(50)));return box;
     }

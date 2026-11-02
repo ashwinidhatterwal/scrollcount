@@ -3,7 +3,7 @@ val uploadStore = System.getenv("SCROLLCOUNT_KEYSTORE")
 android {
  namespace = "in.scrollcount.probe"
  compileSdk = 36
- defaultConfig { applicationId = "in.scrollcount.probe"; minSdk = 26; targetSdk = 36; versionCode = 43; versionName = "1.2.25" }
+ defaultConfig { applicationId = "in.scrollcount.probe"; minSdk = 26; targetSdk = 36; versionCode = 45; versionName = "1.2.27" }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  if (!uploadStore.isNullOrBlank()) {
   signingConfigs.create("releaseUpload") {

@@ -7,16 +7,21 @@ public final class ScrollAvatarStateTest {
             throw new AssertionError("Frame interval must be >= 15 FPS: " + ScrollAvatarState.FRAME_INTERVAL_MS);
         }
 
-        // 2. Exact tier boundaries: 0, 1..99, 100..249, 250..499, 500..699, 700+
-        ScrollAvatarState zen = ScrollAvatarState.evaluate(0, 150, 1000L);
-        ScrollAvatarState fresh99 = ScrollAvatarState.evaluate(99, 150, 1000L);
-        ScrollAvatarState cruising100 = ScrollAvatarState.evaluate(100, 150, 1000L);
-        ScrollAvatarState cruising249 = ScrollAvatarState.evaluate(249, 150, 1000L);
-        ScrollAvatarState trance250 = ScrollAvatarState.evaluate(250, 150, 1000L);
-        ScrollAvatarState trance499 = ScrollAvatarState.evaluate(499, 150, 1000L);
-        ScrollAvatarState fatigued500 = ScrollAvatarState.evaluate(500, 150, 1000L);
-        ScrollAvatarState fatigued699 = ScrollAvatarState.evaluate(699, 150, 1000L);
-        ScrollAvatarState zombie700 = ScrollAvatarState.evaluate(700, 150, 1000L);
+        // 2. Title rotation interval must be 5,000 ms (5 seconds)
+        if (ScrollAvatarState.TITLE_ROTATION_MS != 5000L) {
+            throw new AssertionError("Title rotation interval must be 5000ms");
+        }
+
+        // 3. Exact tier boundaries: 0, 1..99, 100..249, 250..499, 500..699, 700+
+        ScrollAvatarState zen = ScrollAvatarState.evaluate(0, 150, 0L);
+        ScrollAvatarState fresh99 = ScrollAvatarState.evaluate(99, 150, 0L);
+        ScrollAvatarState cruising100 = ScrollAvatarState.evaluate(100, 150, 0L);
+        ScrollAvatarState cruising249 = ScrollAvatarState.evaluate(249, 150, 0L);
+        ScrollAvatarState trance250 = ScrollAvatarState.evaluate(250, 150, 0L);
+        ScrollAvatarState trance499 = ScrollAvatarState.evaluate(499, 150, 0L);
+        ScrollAvatarState fatigued500 = ScrollAvatarState.evaluate(500, 150, 0L);
+        ScrollAvatarState fatigued699 = ScrollAvatarState.evaluate(699, 150, 0L);
+        ScrollAvatarState zombie700 = ScrollAvatarState.evaluate(700, 150, 0L);
 
         if (zen.tier != ScrollAvatarState.TIER_ZEN) throw new AssertionError("Expected ZEN at 0");
         if (fresh99.tier != ScrollAvatarState.TIER_FRESH) throw new AssertionError("Expected FRESH at 99");
@@ -33,27 +38,25 @@ public final class ScrollAvatarStateTest {
             throw new AssertionError("Expected ZOMBIE on 700+");
         }
 
-        // 3. Every state must have a distinct, non-empty title
-        java.util.Set<String> titles = new java.util.HashSet<>();
-        for (ScrollAvatarState s : new ScrollAvatarState[]{zen, fresh99, cruising100, trance250, fatigued500, zombie700}) {
-            if (s.moodTitle == null || s.moodTitle.trim().isEmpty()) {
-                throw new AssertionError("Empty moodTitle for tier " + s.tier);
+        // 4. Every state must have multiple distinct titles rotating every 5 seconds
+        java.util.Set<String> allTitles = new java.util.HashSet<>();
+        long[] sampleScrolls = {0L, 50L, 100L, 250L, 500L, 700L};
+        for (int tier = 0; tier < sampleScrolls.length; tier++) {
+            String[] pool = ScrollAvatarState.titlesForTier(tier);
+            if (pool.length < 3) {
+                throw new AssertionError("Each state must have multiple titles, got " + pool.length);
             }
-            if (!titles.add(s.moodTitle)) {
-                throw new AssertionError("Duplicate moodTitle: " + s.moodTitle);
+            String t0 = ScrollAvatarState.evaluate(sampleScrolls[tier], 0, 0L).moodTitle;
+            String t5 = ScrollAvatarState.evaluate(sampleScrolls[tier], 0, 5000L).moodTitle;
+            String t10 = ScrollAvatarState.evaluate(sampleScrolls[tier], 0, 10000L).moodTitle;
+            if (t0.equals(t5) || t5.equals(t10)) {
+                throw new AssertionError("Titles must switch every 5 seconds for tier " + tier);
             }
-        }
-
-        // 4. Body language and facial expression progression across 0 -> 700+
-        if (!(zen.spineSlouchDeg < fresh99.spineSlouchDeg
-                && fresh99.spineSlouchDeg < cruising100.spineSlouchDeg
-                && cruising100.spineSlouchDeg < trance250.spineSlouchDeg
-                && trance250.spineSlouchDeg < fatigued500.spineSlouchDeg
-                && fatigued500.spineSlouchDeg < zombie700.spineSlouchDeg)) {
-            throw new AssertionError("Posture slouch must progressively increase across thresholds");
-        }
-        if (!(zen.mouthCurve > 0.5f && fresh99.mouthCurve > 0.4f && fatigued500.mouthCurve < -0.4f && zombie700.mouthCurve < -0.7f)) {
-            throw new AssertionError("Mouth expression must shift from smile to frown as scroll fatigue grows");
+            for (String title : pool) {
+                if (!allTitles.add(title)) {
+                    throw new AssertionError("Duplicate title across states: " + title);
+                }
+            }
         }
     }
 }

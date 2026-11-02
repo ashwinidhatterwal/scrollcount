@@ -9,16 +9,18 @@ import android.graphics.RectF;
 import android.graphics.Shader;
 import android.os.SystemClock;
 import android.view.View;
+import android.widget.TextView;
 
 /**
- * Refined 24 FPS animated character avatar enclosed in a balanced circular medallion.
- * Expresses scroll load strictly through polished character art, facial expression,
- * and posture — with zero technical labels or debug text exposed to the user.
+ * Expressive 24 FPS (~41ms frame cadence) full upper-body animated character view.
+ * Restores the expressive three-quarter posture (visible spine slouch, articulated arm & elbow,
+ * phone light cone, Zen closed-eye smile + sparkles, dramatic eye/brow/mouth transitions,
+ * sweat drop, and spinning spiral eyes) while keeping a bound title TextView directly above
+ * the avatar automatically synchronized as titles rotate every 5 seconds.
  */
 final class ScrollAvatarView extends View {
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path path = new Path();
-    private final Path clipPath = new Path();
     private final RectF rect = new RectF();
 
     private long targetScrolls;
@@ -26,6 +28,8 @@ final class ScrollAvatarView extends View {
     private int dailyGoal;
     private boolean initialized;
     private boolean attached;
+    private TextView boundTitleView;
+    private String lastBoundTitle = "";
     private ScrollAvatarState state = ScrollAvatarState.evaluate(0, 0, 0);
 
     private final Runnable frameTicker = new Runnable() {
@@ -38,6 +42,7 @@ final class ScrollAvatarView extends View {
                 displayedScrolls = targetScrolls;
             }
             state = ScrollAvatarState.evaluateSmooth(displayedScrolls, dailyGoal, SystemClock.elapsedRealtime());
+            syncBoundTitle();
             invalidate();
             if (ValueAnimator.areAnimatorsEnabled()) {
                 postDelayed(this, ScrollAvatarState.FRAME_INTERVAL_MS);
@@ -55,6 +60,19 @@ final class ScrollAvatarView extends View {
         updateContentDescription();
     }
 
+    void bindTitleView(TextView titleView) {
+        this.boundTitleView = titleView;
+        this.lastBoundTitle = "";
+        syncBoundTitle();
+    }
+
+    private void syncBoundTitle() {
+        if (boundTitleView != null && !state.moodTitle.equals(lastBoundTitle)) {
+            lastBoundTitle = state.moodTitle;
+            boundTitleView.setText(state.moodTitle);
+        }
+    }
+
     void update(long scrolls, int dailyGoal) {
         long clean = Math.max(0L, scrolls);
         int cleanGoal = Math.max(0, dailyGoal);
@@ -66,6 +84,7 @@ final class ScrollAvatarView extends View {
             this.initialized = true;
         }
         state = ScrollAvatarState.evaluateSmooth(this.displayedScrolls, this.dailyGoal, SystemClock.elapsedRealtime());
+        syncBoundTitle();
         if (changed) updateContentDescription();
         invalidate();
     }
@@ -102,404 +121,296 @@ final class ScrollAvatarView extends View {
         int w = getWidth(), h = getHeight();
         if (w <= 0 || h <= 0) return;
 
-        float size = Math.min(w, h);
-        float cx = w * 0.5f;
-        float cy = h * 0.5f;
-        float radius = size * 0.46f;
-        float u = radius / 100f; // Normalized 100-unit coordinate system inside medallion
+        float unit = Math.min(w, h) / 185f;
+        // Center the full upper-body character cleanly inside the square view bounds
+        float cx = w * 0.46f;
+        float cy = h * 0.54f;
 
-        int accentColor = tierColor(state.tier);
-
-        // 1. Medallion backdrop with soft vertical gradient
+        // 1. Background reactive aura ring
+        int auraColor = tierColor(state.tier);
         paint.setStyle(Paint.Style.FILL);
-        paint.setShader(new LinearGradient(
-                cx, cy - radius, cx, cy + radius,
-                backdropTopColor(state.tier), backdropBottomColor(state.tier),
-                Shader.TileMode.CLAMP));
-        c.drawCircle(cx, cy, radius, paint);
-        paint.setShader(null);
+        paint.setColor((auraColor & 0x00ffffff) | 0x22000000);
+        float auraRadius = 74f * unit * (1f + state.breathOffset * 0.035f);
+        c.drawCircle(w * 0.5f, h * 0.5f, auraRadius, paint);
 
-        // Clip character neatly inside the circular medallion so shoulders/torso align with the frame
-        c.save();
-        clipPath.reset();
-        clipPath.addCircle(cx, cy, radius, Path.Direction.CW);
-        c.clipPath(clipPath);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2.2f * unit);
+        paint.setColor((auraColor & 0x00ffffff) | 0x66000000);
+        c.drawCircle(w * 0.5f, h * 0.5f, auraRadius, paint);
 
-        // Soft ambient glow behind head
-        paint.setColor((accentColor & 0x00ffffff) | 0x24000000);
-        float haloR = (58f + state.breathOffset * 3f) * u;
-        c.drawCircle(cx, cy - 6f * u, haloR, paint);
+        // 2. Expressive posture coordinates (hip/base -> torso/shoulders -> neck -> head)
+        float slouchRad = (float) Math.toRadians(state.spineSlouchDeg);
+        float hipX = cx - 10f * unit;
+        float hipY = cy + 52f * unit;
 
-        // 2. Posture kinematics: spine lean & shoulder position anchored cleanly at bottom of medallion
-        float slouchPx = state.stress * 14f * u;
-        float dropPx = state.shoulderDrop * 10f * u;
-        float breathPx = state.breathOffset * 2.2f * u;
+        float torsoLen = 50f * unit;
+        float shoulderX = hipX + (float) Math.sin(slouchRad) * torsoLen;
+        float shoulderY = hipY - (float) Math.cos(slouchRad) * torsoLen
+                + state.shoulderDrop * 6.5f * unit
+                - state.breathOffset * 2.4f * unit;
 
-        float torsoCenterX = cx - 4f * u + slouchPx * 0.35f;
-        float shoulderY = cy + 36f * u + dropPx - breathPx;
-        float bottomY = cy + radius + 14f * u;
-
-        // Torso / rounded sweater shoulders
+        // Torso / hoodie
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(shirtColor(state.tier));
         path.reset();
-        path.moveTo(torsoCenterX - 66f * u, bottomY);
-        path.cubicTo(
-                torsoCenterX - 64f * u, shoulderY + 12f * u,
-                torsoCenterX - 38f * u, shoulderY - 4f * u,
-                torsoCenterX, shoulderY - 4f * u);
-        path.cubicTo(
-                torsoCenterX + 38f * u, shoulderY - 4f * u,
-                torsoCenterX + 64f * u, shoulderY + 12f * u,
-                torsoCenterX + 66f * u, bottomY);
+        path.moveTo(hipX - 34f * unit, hipY + 10f * unit);
+        path.quadTo(hipX - 32f * unit, shoulderY + 6f * unit, shoulderX - 24f * unit, shoulderY);
+        path.lineTo(shoulderX + 24f * unit, shoulderY + 2f * unit);
+        path.quadTo(hipX + 35f * unit, shoulderY + 14f * unit, hipX + 32f * unit, hipY + 10f * unit);
         path.close();
         c.drawPath(path, paint);
 
-        // Subtle sweater depth shading on left side
-        paint.setColor(0x1f000000);
-        path.reset();
-        path.moveTo(torsoCenterX - 66f * u, bottomY);
-        path.cubicTo(
-                torsoCenterX - 60f * u, shoulderY + 16f * u,
-                torsoCenterX - 30f * u, shoulderY,
-                torsoCenterX - 6f * u, shoulderY + 2f * u);
-        path.lineTo(torsoCenterX - 12f * u, bottomY);
-        path.close();
-        c.drawPath(path, paint);
-
-        // Crew-neck collar trim
+        // Collar detail
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(4.5f * u);
-        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeWidth(2.4f * unit);
         paint.setColor(0x33ffffff);
-        rect.set(torsoCenterX - 22f * u, shoulderY - 9f * u, torsoCenterX + 22f * u, shoulderY + 11f * u);
-        c.drawArc(rect, 12f, 156f, false, paint);
+        rect.set(shoulderX - 13f * unit, shoulderY - 4f * unit, shoulderX + 13f * unit, shoulderY + 13f * unit);
+        c.drawArc(rect, 15f, 150f, false, paint);
 
-        // 3. Neck with soft chin shadow
-        float headX = cx + slouchPx * 0.65f + state.headSwayX * 5.5f * u;
-        float headY = cy - 14f * u + dropPx * 0.85f - breathPx * 0.6f;
+        // Neck
+        float headAngleRad = (float) Math.toRadians(state.headTiltDeg);
+        float headX = shoulderX + (float) Math.sin(slouchRad * 0.7f + headAngleRad * 0.5f) * 26f * unit + state.headSwayX * 5.5f * unit;
+        float headY = shoulderY - 28f * unit + state.shoulderDrop * 5.5f * unit;
 
-        paint.setStyle(Paint.Style.FILL);
-        paint.setColor(0xffd79e7d);
-        rect.set(torsoCenterX - 11f * u, headY + 24f * u, torsoCenterX + 11f * u, shoulderY + 8f * u);
-        c.drawRoundRect(rect, 10f * u, 10f * u, paint);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeWidth(13f * unit);
+        paint.setColor(0xffe0ac8b);
+        c.drawLine(shoulderX, shoulderY + 2f * unit, headX, headY + 9f * unit, paint);
 
-        // Chin cast shadow on neck
-        paint.setColor(0x26402218);
-        rect.set(torsoCenterX - 11f * u, headY + 24f * u, torsoCenterX + 11f * u, headY + 38f * u);
-        c.drawOval(rect, paint);
-
-        // 4. Head & Facial Expression
+        // 3. Expressive Head & Face (rotated by headTiltDeg)
         c.save();
         c.translate(headX, headY);
-        c.rotate(state.headTiltDeg * 0.42f);
+        c.rotate(state.headTiltDeg * 0.55f);
 
-        float headW = 40f * u;
-        float headH = 44f * u;
-        int skinTone = state.tier >= ScrollAvatarState.TIER_FATIGUED ? 0xffe3bfa8 : 0xfff1c4a5;
-        int earTone = state.tier >= ScrollAvatarState.TIER_FATIGUED ? 0xffd3ad95 : 0xffe2b191;
-
-        // Symmetric Ears + Inner Ear Fold
+        float headR = 27.5f * unit;
+        // Ear
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(earTone);
-        c.drawCircle(-headW * 0.95f, 3f * u, 8.5f * u, paint);
-        c.drawCircle(headW * 0.95f, 3f * u, 8.5f * u, paint);
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(2.0f * u);
-        paint.setColor(0x447a4430);
-        c.drawArc(-headW * 0.95f - 4f * u, -1f * u, -headW * 0.95f + 4f * u, 7f * u, 110f, 160f, false, paint);
-        c.drawArc(headW * 0.95f - 4f * u, -1f * u, headW * 0.95f + 4f * u, 7f * u, -70f, 160f, false, paint);
+        paint.setColor(0xffd39c7b);
+        c.drawCircle(-headR * 0.88f, 2f * unit, 6.2f * unit, paint);
 
-        // Refined Head Contour (smooth rounded forehead + tapered jawline)
-        paint.setStyle(Paint.Style.FILL);
-        paint.setColor(skinTone);
-        path.reset();
-        path.moveTo(0f, -headH);
-        path.cubicTo(headW * 0.92f, -headH, headW, -headH * 0.35f, headW * 0.94f, headH * 0.18f);
-        path.cubicTo(headW * 0.86f, headH * 0.68f, headW * 0.42f, headH, 0f, headH);
-        path.cubicTo(-headW * 0.42f, headH, -headW * 0.86f, headH * 0.68f, -headW * 0.94f, headH * 0.18f);
-        path.cubicTo(-headW, -headH * 0.35f, -headW * 0.92f, -headH, 0f, -headH);
-        path.close();
-        c.drawPath(path, paint);
+        // Head base
+        paint.setColor(state.tier >= ScrollAvatarState.TIER_FATIGUED ? 0xffdcc0ad : 0xffeab696);
+        rect.set(-headR, -headR * 1.06f, headR, headR * 1.02f);
+        c.drawOval(rect, paint);
 
-        // Screen glow reflection on lower face when actively scrolling
-        if (state.screenGlowAlpha > 0.03f) {
-            int glowAlpha = Math.min(140, (int) (state.screenGlowAlpha * 115));
+        // Screen blue glow cast onto lower face when scrolling
+        if (state.screenGlowAlpha > 0.02f) {
+            int glowAlpha = Math.min(180, (int) (state.screenGlowAlpha * 145));
             paint.setShader(new LinearGradient(
-                    headW * 0.5f, headH, -headW * 0.2f, -headH * 0.1f,
-                    (glowAlpha << 24) | 0x0064ffda, 0x0064ffda, Shader.TileMode.CLAMP));
-            c.drawPath(path, paint);
+                    headR * 0.9f, headR * 0.9f, -headR * 0.3f, -headR * 0.4f,
+                    (glowAlpha << 24) | 0x005ce1e6, 0x005ce1e6, Shader.TileMode.CLAMP));
+            c.drawOval(rect, paint);
             paint.setShader(null);
         }
 
-        // Warm rosy cheeks (in rested / fresh tiers)
-        if (state.tier <= ScrollAvatarState.TIER_CRUISING) {
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0x2ee57373);
-            rect.set(-28f * u, 8f * u, -12f * u, 18f * u);
-            c.drawOval(rect, paint);
-            rect.set(12f * u, 8f * u, 28f * u, 18f * u);
-            c.drawOval(rect, paint);
-        }
-
-        // Gaze offset (subtle shift toward the phone when raised)
-        float gazeX = state.tier == ScrollAvatarState.TIER_ZEN ? 0f : 2.5f * u;
-        float eyeY = -1f * u;
-        float leftEyeX = -15.5f * u + gazeX * 0.5f;
-        float rightEyeX = 15.5f * u + gazeX * 0.5f;
-        float eyeR = 8.2f * u;
-
-        // Soft under-eye fatigue bags
-        if (state.eyeBagAlpha > 0.02f) {
-            int bagAlpha = Math.min(150, (int) (state.eyeBagAlpha * 135));
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(2.6f * u);
-            paint.setColor((bagAlpha << 24) | 0x0052364f);
-            rect.set(leftEyeX - eyeR * 0.9f, eyeY + 2f * u, leftEyeX + eyeR * 0.9f, eyeY + eyeR * 1.35f);
-            c.drawArc(rect, 22f, 136f, false, paint);
-            rect.set(rightEyeX - eyeR * 0.9f, eyeY + 2f * u, rightEyeX + eyeR * 0.9f, eyeY + eyeR * 1.35f);
-            c.drawArc(rect, 22f, 136f, false, paint);
-        }
-
-        // Eyes
-        drawPolishedEye(c, leftEyeX, eyeY, eyeR, u, skinTone);
-        drawPolishedEye(c, rightEyeX, eyeY, eyeR, u, skinTone);
-
-        // Delicate Nose Bridge & Tip
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(2.2f * u);
-        paint.setStrokeCap(Paint.Cap.ROUND);
-        paint.setColor(0x558c533e);
+        // Hair cap
+        paint.setColor(0xff1e2824);
         path.reset();
-        path.moveTo(gazeX * 0.6f, eyeY + 2f * u);
-        path.quadTo(gazeX + 2.2f * u, eyeY + 11f * u, gazeX - 1.2f * u, eyeY + 12.5f * u);
-        c.drawPath(path, paint);
-
-        // Smooth Curved Eyebrows
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(3.2f * u);
-        paint.setStrokeCap(Paint.Cap.ROUND);
-        paint.setColor(0xff1c2622);
-        float browSlant = state.browAngleDeg * 0.22f * u;
-        float browLift = (state.tier == ScrollAvatarState.TIER_TRANCE ? -2.2f : 0f) * u;
-
-        path.reset();
-        path.moveTo(leftEyeX - eyeR * 1.05f, eyeY - eyeR * 1.25f - browSlant + browLift);
-        path.quadTo(leftEyeX, eyeY - eyeR * 1.65f + browLift, leftEyeX + eyeR * 1.0f, eyeY - eyeR * 1.20f + browSlant + browLift);
-        c.drawPath(path, paint);
-
-        path.reset();
-        path.moveTo(rightEyeX - eyeR * 1.0f, eyeY - eyeR * 1.20f + browSlant + browLift);
-        path.quadTo(rightEyeX, eyeY - eyeR * 1.65f + browLift, rightEyeX + eyeR * 1.05f, eyeY - eyeR * 1.25f - browSlant + browLift);
-        c.drawPath(path, paint);
-
-        // Expressive Mouth
-        float mouthY = 21f * u;
-        float mouthW = 11.5f * u;
-        if (state.jawOpen > 0.16f) {
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xff632b30);
-            float openH = (3.0f + state.jawOpen * 7.5f) * u;
-            rect.set(gazeX - mouthW * 0.72f, mouthY - openH * 0.35f, gazeX + mouthW * 0.72f, mouthY + openH * 0.85f);
-            c.drawOval(rect, paint);
-            // Subtle tongue tint at bottom of open mouth
-            paint.setColor(0xffbf5f65);
-            rect.set(gazeX - mouthW * 0.42f, mouthY + openH * 0.15f, gazeX + mouthW * 0.42f, mouthY + openH * 0.78f);
-            c.drawOval(rect, paint);
-        } else {
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(3.0f * u);
-            paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setColor(0xff632b30);
-            path.reset();
-            path.moveTo(gazeX - mouthW, mouthY);
-            path.quadTo(gazeX, mouthY + state.mouthCurve * 9.5f * u, gazeX + mouthW, mouthY);
-            c.drawPath(path, paint);
-        }
-
-        // Layered Hair Crown & Swept Front Bangs
-        paint.setStyle(Paint.Style.FILL);
-        paint.setColor(0xff19231f);
-        path.reset();
-        path.moveTo(-headW * 1.02f, -headH * 0.12f);
-        path.cubicTo(-headW * 1.08f, -headH * 0.95f, -headW * 0.45f, -headH * 1.22f, 0f, -headH * 1.20f);
-        path.cubicTo(headW * 0.52f, -headH * 1.22f, headW * 1.08f, -headH * 0.92f, headW * 1.02f, -headH * 0.10f);
-        // Swept front hairline with natural wave
-        path.cubicTo(headW * 0.65f, -headH * 0.58f, headW * 0.15f, -headH * 0.44f, -headW * 0.28f, -headH * 0.62f);
-        path.cubicTo(-headW * 0.62f, -headH * 0.74f, -headW * 0.88f, -headH * 0.45f, -headW * 1.02f, -headH * 0.12f);
+        path.moveTo(-headR * 1.02f, -headR * 0.25f);
+        path.quadTo(-headR * 0.95f, -headR * 1.25f, 0f, -headR * 1.18f);
+        path.quadTo(headR * 1.05f, -headR * 1.15f, headR * 0.96f, -headR * 0.32f);
+        path.quadTo(headR * 0.35f, -headR * 0.68f, -headR * 1.02f, -headR * 0.25f);
         path.close();
         c.drawPath(path, paint);
 
-        // Soft specular hair highlight
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(2.6f * u);
-        paint.setColor(0x29a6ddbd);
-        path.reset();
-        path.moveTo(-headW * 0.48f, -headH * 0.88f);
-        path.quadTo(0f, -headH * 1.04f, headW * 0.46f, -headH * 0.82f);
-        c.drawPath(path, paint);
+        // Face features (facing slightly right toward the held phone)
+        float faceShiftX = 4.8f * unit;
+        float eyeY = -2f * unit;
+        float leftEyeX = faceShiftX - 10f * unit;
+        float rightEyeX = faceShiftX + 10f * unit;
+        float eyeR = 6.0f * unit;
 
-        // Temple sweat drop in fatigued / scrolled-out tiers
-        if (state.tier >= ScrollAvatarState.TIER_FATIGUED) {
-            float dropX = -headW * 0.74f;
-            float dropY = -headH * 0.25f + state.sweatDropProgress * 20f * u;
+        // Under-eye dark circles (fatigue/zombie)
+        if (state.eyeBagAlpha > 0.02f) {
+            int bagAlpha = Math.min(190, (int) (state.eyeBagAlpha * 170));
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(2.5f * unit);
+            paint.setColor((bagAlpha << 24) | 0x004a3248);
+            rect.set(leftEyeX - eyeR, eyeY + 1f * unit, leftEyeX + eyeR, eyeY + eyeR * 1.45f);
+            c.drawArc(rect, 20f, 140f, false, paint);
+            rect.set(rightEyeX - eyeR, eyeY + 1f * unit, rightEyeX + eyeR, eyeY + eyeR * 1.45f);
+            c.drawArc(rect, 20f, 140f, false, paint);
+        }
+
+        // Rosy cheeks in Zen / Fresh tiers
+        if (state.tier <= ScrollAvatarState.TIER_FRESH) {
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xd94fc3f7);
+            paint.setColor(0x38e57373);
+            rect.set(leftEyeX - 9.5f * unit, eyeY + 5.5f * unit, leftEyeX - 1f * unit, eyeY + 11.5f * unit);
+            c.drawOval(rect, paint);
+            rect.set(rightEyeX + 1f * unit, eyeY + 5.5f * unit, rightEyeX + 9.5f * unit, eyeY + 11.5f * unit);
+            c.drawOval(rect, paint);
+        }
+
+        // Eyes
+        drawEye(c, leftEyeX, eyeY, eyeR, unit);
+        drawEye(c, rightEyeX, eyeY, eyeR, unit);
+
+        // Eyebrows
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(2.5f * unit);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setColor(0xff1e2824);
+        float browTilt = state.browAngleDeg * 0.18f * unit;
+        c.drawLine(leftEyeX - eyeR, eyeY - eyeR * 1.35f - browTilt, leftEyeX + eyeR * 0.9f, eyeY - eyeR * 1.35f + browTilt, paint);
+        c.drawLine(rightEyeX - eyeR * 0.9f, eyeY - eyeR * 1.35f + browTilt, rightEyeX + eyeR, eyeY - eyeR * 1.35f - browTilt, paint);
+
+        // Mouth
+        float mouthY = 13.5f * unit;
+        float mouthW = 9.0f * unit;
+        if (state.jawOpen > 0.15f) {
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(0xff5a2a2c);
+            float openH = (2.4f + state.jawOpen * 6.2f) * unit;
+            rect.set(faceShiftX - mouthW * 0.75f, mouthY - openH * 0.4f, faceShiftX + mouthW * 0.75f, mouthY + openH);
+            c.drawOval(rect, paint);
+        } else {
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(2.5f * unit);
+            paint.setColor(0xff5a2a2c);
             path.reset();
-            path.moveTo(dropX, dropY - 8f * u);
-            path.quadTo(dropX + 4.5f * u, dropY, dropX, dropY + 4.5f * u);
-            path.quadTo(dropX - 4.5f * u, dropY, dropX, dropY - 8f * u);
+            path.moveTo(faceShiftX - mouthW, mouthY);
+            path.quadTo(faceShiftX, mouthY + state.mouthCurve * 7.2f * unit, faceShiftX + mouthW, mouthY);
+            c.drawPath(path, paint);
+        }
+
+        // Sweat drop in Fatigued / Zombie tiers
+        if (state.tier >= ScrollAvatarState.TIER_FATIGUED) {
+            float dropY = -headR * 0.55f + state.sweatDropProgress * 17f * unit;
+            float dropX = -headR * 0.72f;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(0xcc4fc3f7);
+            c.drawCircle(dropX, dropY, 3.0f * unit, paint);
+            path.reset();
+            path.moveTo(dropX - 3.0f * unit, dropY);
+            path.lineTo(dropX, dropY - 6.5f * unit);
+            path.lineTo(dropX + 3.0f * unit, dropY);
             path.close();
             c.drawPath(path, paint);
         }
 
         c.restore();
 
-        // 5. Sleek Smartphone & Animated Thumb Swipe in foreground when scrolling
-        if (state.tier > ScrollAvatarState.TIER_ZEN) {
-            float phoneX = cx + (30f + state.phoneRaise * 8f) * u + state.armJitter * 1.5f * u;
-            float phoneY = cy + (52f - state.phoneRaise * 24f) * u + state.armJitter * 1.2f * u;
+        // 4. Held Smartphone, Articulated Arm & Animated Thumb Swipe
+        float phoneX = shoulderX + (35f + state.phoneRaise * 13f) * unit + state.armJitter * 1.7f * unit;
+        float phoneY = shoulderY + (26f - state.phoneRaise * 30f) * unit + state.armJitter * 1.3f * unit;
 
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeCap(Paint.Cap.ROUND);
+        paint.setStrokeWidth(10.5f * unit);
+        paint.setColor(shirtColor(state.tier));
+        float elbowX = shoulderX + 16f * unit;
+        float elbowY = shoulderY + 24f * unit;
+        c.drawLine(shoulderX + 9f * unit, shoulderY + 5f * unit, elbowX, elbowY, paint);
+        c.drawLine(elbowX, elbowY, phoneX - 5f * unit, phoneY + 7f * unit, paint);
+
+        if (state.tier > ScrollAvatarState.TIER_ZEN) {
             c.save();
             c.translate(phoneX, phoneY);
-            c.rotate(-10f + state.stress * 6f);
+            c.rotate(-14f + state.stress * 10f);
 
-            // Phone outer body with subtle rim
+            // Screen light cone toward face
+            int coneAlpha = Math.min(115, (int) (state.screenGlowAlpha * 95));
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xff111915);
-            rect.set(-13f * u, -24f * u, 13f * u, 24f * u);
-            c.drawRoundRect(rect, 5.5f * u, 5.5f * u, paint);
+            paint.setColor((coneAlpha << 24) | 0x0064ffda);
+            path.reset();
+            path.moveTo(-4f * unit, -15f * unit);
+            path.lineTo(-40f * unit, -40f * unit);
+            path.lineTo(-34f * unit, 6f * unit);
+            path.lineTo(-4f * unit, 15f * unit);
+            path.close();
+            c.drawPath(path, paint);
 
-            paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(1.4f * u);
-            paint.setColor(0x44a6ddbd);
-            c.drawRoundRect(rect, 5.5f * u, 5.5f * u, paint);
+            // Phone body
+            rect.set(-8.5f * unit, -18f * unit, 8.5f * unit, 18f * unit);
+            paint.setColor(0xff141e19);
+            c.drawRoundRect(rect, 3.8f * unit, 3.8f * unit, paint);
 
-            // Illuminated screen
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(state.tier >= ScrollAvatarState.TIER_FATIGUED ? 0xff351c33 : 0xff163d35);
-            rect.set(-10.5f * u, -20.5f * u, 10.5f * u, 20.5f * u);
-            c.drawRoundRect(rect, 3.8f * u, 3.8f * u, paint);
+            // Phone illuminated screen
+            rect.set(-6.5f * unit, -15f * unit, 6.5f * unit, 15f * unit);
+            paint.setColor(state.tier >= ScrollAvatarState.TIER_FATIGUED ? 0xff3b1d38 : 0xff163d35);
+            c.drawRoundRect(rect, 2.4f * unit, 2.4f * unit, paint);
 
-            // Scrolling feed card inside phone screen
-            float feedOffset = 10f * u - state.thumbSwipePhase * 20f * u;
-            paint.setColor(accentColor);
-            rect.set(-7.5f * u, feedOffset - 6.5f * u, 7.5f * u, feedOffset + 6.5f * u);
-            c.drawRoundRect(rect, 2.5f * u, 2.5f * u, paint);
+            // Animated mini feed item moving upward with thumbSwipePhase
+            float feedY = 7.5f * unit - state.thumbSwipePhase * 16f * unit;
+            paint.setColor(auraColor);
+            rect.set(-4.8f * unit, feedY - 4.8f * unit, 4.8f * unit, feedY + 4.8f * unit);
+            c.drawRoundRect(rect, 2f * unit, 2f * unit, paint);
 
-            // Wrapped fingers on right edge of phone
-            paint.setColor(earTone);
-            c.drawCircle(13f * u, -6f * u, 3.4f * u, paint);
-            c.drawCircle(13f * u, 2f * u, 3.4f * u, paint);
-            c.drawCircle(13f * u, 10f * u, 3.2f * u, paint);
-
-            // Articulated thumb gliding vertically across the screen
-            float thumbArc = (float) Math.sin(state.thumbSwipePhase * Math.PI);
-            float thumbY = 12f * u - thumbArc * 18f * u;
-            float thumbX = -9.5f * u + thumbArc * 2.5f * u;
-            paint.setColor(skinTone);
-            rect.set(thumbX - 4.5f * u, thumbY - 6f * u, thumbX + 4.5f * u, thumbY + 6f * u);
-            c.drawOval(rect, paint);
+            // Animated thumb swiping vertically across screen
+            float thumbY = 9.5f * unit - (float) Math.sin(state.thumbSwipePhase * Math.PI) * 15f * unit;
+            paint.setColor(0xffeab696);
+            c.drawCircle(-6.5f * unit, thumbY, 4.0f * unit, paint);
 
             c.restore();
+        } else {
+            // Zen floating mindfulness sparkles
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(0x99a6ddbd);
+            float floatOff = state.breathOffset * 3.8f * unit;
+            c.drawCircle(w * 0.5f - 48f * unit, cy - 34f * unit + floatOff, 3.3f * unit, paint);
+            c.drawCircle(w * 0.5f + 48f * unit, cy - 26f * unit - floatOff, 4.0f * unit, paint);
         }
-
-        c.restore(); // Restore medallion clip
-
-        // 6. Outer Medallion Ring Border
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(2.6f * u);
-        paint.setColor((accentColor & 0x00ffffff) | 0x88000000);
-        c.drawCircle(cx, cy, radius - 1.3f * u, paint);
     }
 
-    private void drawPolishedEye(Canvas c, float x, float y, float r, float u, int skinTone) {
+    private void drawEye(Canvas c, float x, float y, float r, float unit) {
         if (state.eyeOpenness <= 0.14f) {
-            // Peaceful closed / blinking eye arc
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(2.8f * u);
+            paint.setStrokeWidth(2.3f * unit);
             paint.setStrokeCap(Paint.Cap.ROUND);
-            paint.setColor(0xff1c2622);
-            rect.set(x - r, y - r * 0.45f, x + r, y + r * 0.55f);
-            c.drawArc(rect, 18f, 144f, false, paint);
+            paint.setColor(0xff1e2824);
+            rect.set(x - r, y - r * 0.5f, x + r, y + r * 0.6f);
+            c.drawArc(rect, 15f, 150f, false, paint);
             return;
         }
 
-        float ry = r * Math.min(1.18f, state.eyeOpenness);
-        c.save();
-        path.reset();
-        rect.set(x - r, y - ry, x + r, y + ry);
-        path.addOval(rect, Path.Direction.CW);
-        c.clipPath(path);
-
-        // Sclera
         paint.setStyle(Paint.Style.FILL);
-        paint.setColor(state.tier >= ScrollAvatarState.TIER_FATIGUED ? 0xfffff3f0 : 0xffffffff);
+        paint.setColor(state.tier >= ScrollAvatarState.TIER_FATIGUED ? 0xfffff0ee : 0xffffffff);
+        float ry = r * Math.min(1.25f, state.eyeOpenness);
+        rect.set(x - r, y - ry, x + r, y + ry);
         c.drawOval(rect, paint);
 
         if (state.tier == ScrollAvatarState.TIER_ZOMBIE) {
-            // Dazed spiral iris
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(2.0f * u);
+            paint.setStrokeWidth(1.8f * unit);
             paint.setColor(0xffd84315);
             for (int i = 0; i < 2; i++) {
                 float startDeg = (float) Math.toDegrees(state.spiralPhaseRad) + i * 180f;
-                rect.set(x - r * 0.68f, y - r * 0.68f, x + r * 0.68f, y + r * 0.68f);
-                c.drawArc(rect, startDeg, 220f, false, paint);
+                rect.set(x - r * 0.72f, y - r * 0.72f, x + r * 0.72f, y + r * 0.72f);
+                c.drawArc(rect, startDeg, 230f, false, paint);
             }
             paint.setStyle(Paint.Style.FILL);
-            c.drawCircle(x, y, 2.2f * u, paint);
+            c.drawCircle(x, y, 1.8f * unit, paint);
         } else {
-            float px = x + (state.tier == ScrollAvatarState.TIER_ZEN ? 0f : 1.2f * u);
-            float py = y + state.pupilOffsetY * r * 0.40f;
-
-            // Iris
             paint.setStyle(Paint.Style.FILL);
-            paint.setColor(0xff2c5243);
-            c.drawCircle(px, py, r * 0.60f, paint);
+            paint.setColor(0xff182620);
+            float py = y + state.pupilOffsetY * r * 0.42f;
+            float px = x + 1.3f * unit;
+            c.drawCircle(px, py, r * 0.48f, paint);
 
-            // Pupil
-            paint.setColor(0xff111c17);
-            c.drawCircle(px, py, r * 0.34f, paint);
-
-            // Dual specular catchlights
-            paint.setColor(0xffffffff);
-            c.drawCircle(px - r * 0.20f, py - r * 0.20f, r * 0.17f, paint);
-            paint.setColor(0xbbffffff);
-            c.drawCircle(px + r * 0.18f, py + r * 0.18f, r * 0.08f, paint);
+            paint.setColor(0xccffffff);
+            c.drawCircle(px - r * 0.16f, py - r * 0.18f, r * 0.16f, paint);
         }
 
-        // Smooth curved upper eyelid droop
-        if (state.upperLidDroop > 0.04f) {
-            float lidY = (y - ry) + (ry * 2f * state.upperLidDroop);
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(skinTone);
+        if (state.upperLidDroop > 0.05f) {
+            c.save();
             path.reset();
-            path.moveTo(x - r * 1.2f, y - ry * 1.2f);
-            path.lineTo(x + r * 1.2f, y - ry * 1.2f);
-            path.lineTo(x + r * 1.2f, lidY);
-            path.quadTo(x, lidY + 2.2f * u, x - r * 1.2f, lidY);
-            path.close();
-            c.drawPath(path, paint);
+            rect.set(x - r, y - ry, x + r, y + ry);
+            path.addOval(rect, Path.Direction.CW);
+            c.clipPath(path);
 
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(state.tier >= ScrollAvatarState.TIER_FATIGUED ? 0xffd2b09a : 0xffe2aa88);
+            float lidBottom = (y - ry) + (ry * 2f * state.upperLidDroop);
+            rect.set(x - r * 1.1f, y - ry * 1.1f, x + r * 1.1f, lidBottom);
+            c.drawRect(rect, paint);
             paint.setStyle(Paint.Style.STROKE);
-            paint.setStrokeWidth(2.2f * u);
-            paint.setColor(0xff1c2622);
-            path.reset();
-            path.moveTo(x - r, lidY);
-            path.quadTo(x, lidY + 2.2f * u, x + r, lidY);
-            c.drawPath(path, paint);
+            paint.setStrokeWidth(1.8f * unit);
+            paint.setColor(0xff1e2824);
+            c.drawLine(x - r, lidBottom, x + r, lidBottom, paint);
+            c.restore();
         }
-
-        c.restore();
-
-        // Subtle upper lash line
-        paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(2.2f * u);
-        paint.setStrokeCap(Paint.Cap.ROUND);
-        paint.setColor(0xff1c2622);
-        rect.set(x - r, y - ry, x + r, y + ry);
-        c.drawArc(rect, 195f, 150f, false, paint);
     }
 
     private static int tierColor(int tier) {
@@ -513,36 +424,14 @@ final class ScrollAvatarView extends View {
         }
     }
 
-    private static int backdropTopColor(int tier) {
-        switch (tier) {
-            case ScrollAvatarState.TIER_ZEN:
-            case ScrollAvatarState.TIER_FRESH: return 0xff1b3f30;
-            case ScrollAvatarState.TIER_CRUISING: return 0xff183848;
-            case ScrollAvatarState.TIER_TRANCE: return 0xff2b2947;
-            case ScrollAvatarState.TIER_FATIGUED: return 0xff3d2522;
-            default: return 0xff3b1c2b;
-        }
-    }
-
-    private static int backdropBottomColor(int tier) {
-        switch (tier) {
-            case ScrollAvatarState.TIER_ZEN:
-            case ScrollAvatarState.TIER_FRESH: return 0xff0d231a;
-            case ScrollAvatarState.TIER_CRUISING: return 0xff0e222c;
-            case ScrollAvatarState.TIER_TRANCE: return 0xff171629;
-            case ScrollAvatarState.TIER_FATIGUED: return 0xff211412;
-            default: return 0xff210e17;
-        }
-    }
-
     private static int shirtColor(int tier) {
         switch (tier) {
             case ScrollAvatarState.TIER_ZEN:
-            case ScrollAvatarState.TIER_FRESH: return 0xff2e8560;
-            case ScrollAvatarState.TIER_CRUISING: return 0xff2b6982;
-            case ScrollAvatarState.TIER_TRANCE: return 0xff63528f;
-            case ScrollAvatarState.TIER_FATIGUED: return 0xff8a523f;
-            default: return 0xff7a334f;
+            case ScrollAvatarState.TIER_FRESH: return 0xff2b7a58;
+            case ScrollAvatarState.TIER_CRUISING: return 0xff275d73;
+            case ScrollAvatarState.TIER_TRANCE: return 0xff5a4b81;
+            case ScrollAvatarState.TIER_FATIGUED: return 0xff7a4938;
+            default: return 0xff6b2d46;
         }
     }
 }
